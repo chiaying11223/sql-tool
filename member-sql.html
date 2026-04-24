@@ -124,6 +124,55 @@
     padding: 0 28px;
   }
 
+  /* ========== Tabs ========== */
+  .tabs {
+    max-width: 960px;
+    margin: 0 auto 20px;
+    padding: 0 28px;
+    display: flex;
+    gap: 4px;
+    border-bottom: 1px solid var(--border);
+  }
+  .tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 0;
+    border-bottom: 2px solid transparent;
+    margin-bottom: -1px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.15s;
+  }
+  .tab-btn:hover {
+    color: var(--text);
+    background: transparent;
+    transform: none;
+  }
+  .tab-btn.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .tab-btn .count {
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 1px 7px;
+    border-radius: 100px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+  }
+  .tab-btn.active .count {
+    background: var(--accent-soft);
+    color: var(--accent);
+  }
+  .tab-pane { display: block; }
+  .tab-pane[hidden] { display: none; }
+
   /* ========== Steps ========== */
   .step {
     margin-bottom: 20px;
@@ -742,7 +791,13 @@
   </div>
 </div>
 
+<nav class="tabs" role="tablist">
+  <button class="tab-btn active" id="tabBtnGenerate" onclick="switchTab('generate')">📤 產生 SQL</button>
+  <button class="tab-btn" id="tabBtnManage" onclick="switchTab('manage')">⚙ 管理查詢 <span class="count" id="manageCount">0</span></button>
+</nav>
+
 <main>
+  <div class="tab-pane" id="tabGenerate">
   <!-- Step 1 -->
   <section class="step" id="step1">
     <div class="step-header">
@@ -809,6 +864,40 @@
       </div>
     </div>
   </section>
+  </div><!-- /tabGenerate -->
+
+  <div class="tab-pane" id="tabManage" hidden>
+    <!-- 儲存位置 -->
+    <section class="step">
+      <div class="step-header">
+        <span class="step-num">🔗</span>
+        <span class="step-title">儲存位置</span>
+      </div>
+      <div class="step-body" id="manageSyncArea"></div>
+    </section>
+
+    <!-- 查詢列表 -->
+    <section class="step" id="manageListSection">
+      <div class="step-header">
+        <span class="step-num">📋</span>
+        <span class="step-title">查詢列表</span>
+        <span class="spacer"></span>
+        <button onclick="newQuery()">＋ 新增查詢</button>
+      </div>
+      <div class="step-body" id="manageListArea"></div>
+    </section>
+
+    <!-- 編輯器（新增/編輯時顯示） -->
+    <section class="step" id="manageEditorSection" hidden>
+      <div class="step-header">
+        <span class="step-num">✏</span>
+        <span class="step-title" id="manageEditorTitle">新增查詢</span>
+        <span class="spacer"></span>
+        <button class="ghost" onclick="cancelEdit()">取消</button>
+      </div>
+      <div class="step-body" id="manageEditorArea"></div>
+    </section>
+  </div><!-- /tabManage -->
 </main>
 
 <!-- Sticky action bar -->
@@ -819,8 +908,8 @@
   </div>
 </div>
 
-<!-- Drawer -->
-<aside class="drawer" id="drawer" aria-hidden="true">
+<!-- Drawer (legacy, hidden — functionality moved to manage tab) -->
+<aside class="drawer" id="drawer" aria-hidden="true" hidden style="display:none">
   <div class="drawer-backdrop" onclick="closeDrawer()"></div>
   <div class="drawer-panel">
     <div class="drawer-header">
@@ -850,6 +939,7 @@ const STORE_KEY = 'member_sql_queries_v1';
 const SELECT_KEY = 'member_sql_selected_v1';
 const SOURCE_KEY = 'member_sql_source_v1';
 const SHEET_URL_KEY = 'member_sql_sheet_url_v1';
+const APPS_URL_KEY = 'member_sql_apps_url_v1';
 
 let queries = [];
 let selectedIds = [];
@@ -857,6 +947,7 @@ let editingId = null;
 let currentFile = null;
 let syncSource = localStorage.getItem(SOURCE_KEY) || 'local'; // 'local' | 'sheet'
 let sheetUrl = localStorage.getItem(SHEET_URL_KEY) || '';
+let appsUrl = localStorage.getItem(APPS_URL_KEY) || '';
 let lastSyncStatus = null; // { ok, message, count, at }
 
 function isSheetMode() { return syncSource === 'sheet' && !!sheetUrl; }
@@ -973,8 +1064,53 @@ function csvToQueries(rows) {
       sql
     });
   }
-  if (!out.length) throw new Error('CSV 沒有任何有效資料列');
-  return out;
+  return out; // empty 是允許的 — 代表 Sheet 還沒任何查詢
+}
+
+const APPS_SCRIPT_CODE = `function doPost(e) {
+  try {
+    const p = JSON.parse(e.postData.contents);
+    const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
+    const headers = ['name','description','idColumn','accountColumn','joinKey','sql'];
+    sheet.getRange(1,1,1,headers.length).setValues([headers]);
+    const last = sheet.getLastRow();
+    if (last > 1) sheet.getRange(2,1,last-1,headers.length).clearContent();
+    const rows = (p.queries||[]).map(q => headers.map(h => q[h] || ''));
+    if (rows.length) sheet.getRange(2,1,rows.length,headers.length).setValues(rows);
+    return ContentService.createTextOutput(JSON.stringify({ok:true,count:rows.length}))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({ok:false,error:String(err)}))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}`;
+
+async function writeToSheet(queriesArr) {
+  if (!appsUrl) return { ok: false, reason: 'no_url' };
+  try {
+    const resp = await fetch(appsUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ queries: queriesArr })
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    let result;
+    try { result = JSON.parse(text); } catch { throw new Error('回應非 JSON'); }
+    if (!result.ok) throw new Error(result.error || '未知錯誤');
+    return { ok: true, count: result.count };
+  } catch (err) {
+    return { ok: false, reason: err.message };
+  }
+}
+
+async function copyAppsScriptCode() {
+  try {
+    await navigator.clipboard.writeText(APPS_SCRIPT_CODE);
+    toast('✓ Apps Script 程式碼已複製到剪貼簿', 'success', 3500);
+  } catch {
+    toast('複製失敗', 'error');
+  }
 }
 
 async function fetchFromSheet(url) {
@@ -1131,10 +1267,10 @@ function renderQueryList() {
   const list = $('queryList');
   if (!queries.length) {
     list.innerHTML = `
-      <div class="q-add empty" onclick="newQuery()">
+      <div class="q-add empty" onclick="switchTab('manage')">
         <div class="plus">＋</div>
-        <div class="label">新增第一個查詢</div>
-        <div class="hint">把你原本的 SQL 貼進去，一鍵解析</div>
+        <div class="label">尚無查詢</div>
+        <div class="hint">切換到「⚙ 管理查詢」頁籤新增第一個查詢</div>
       </div>`;
     updateModeBadge();
     return;
@@ -1168,12 +1304,7 @@ function renderQueryList() {
         <div class="q-badges">${badges.join('')}</div>
       </div>
     `;
-  }).join('') + `
-    <div class="q-add" onclick="newQuery()">
-      <div class="plus">＋</div>
-      <div class="label">新增查詢</div>
-    </div>
-  `;
+  }).join('');
 
   list.querySelectorAll('.q-card').forEach(card => {
     card.addEventListener('click', () => {
@@ -1256,17 +1387,92 @@ function updateStepStates() {
 }
 
 /* ==================================================
- * Drawer (management)
+ * Tabs
+ * ================================================== */
+let currentTab = 'generate';
+
+function switchTab(name) {
+  currentTab = name;
+  $('tabGenerate').hidden = name !== 'generate';
+  $('tabManage').hidden = name !== 'manage';
+  $('tabBtnGenerate').classList.toggle('active', name === 'generate');
+  $('tabBtnManage').classList.toggle('active', name === 'manage');
+  // 切換時隱藏編輯器
+  if (name === 'manage') {
+    renderManageTab();
+  } else {
+    cancelEdit();
+  }
+}
+
+function renderManageTab() {
+  renderManageSync();
+  renderManageList();
+  updateModeBadge();
+  const c = $('manageCount');
+  if (c) c.textContent = queries.length;
+}
+
+function renderManageSync() {
+  $('manageSyncArea').innerHTML = renderSyncPanel();
+}
+
+function renderManageList() {
+  const box = $('manageListArea');
+  if (!queries.length) {
+    box.innerHTML = `
+      <div class="q-add empty" onclick="newQuery()">
+        <div class="plus">＋</div>
+        <div class="label">新增第一個查詢</div>
+        <div class="hint">把原本的 SQL 貼進去一鍵解析</div>
+      </div>`;
+    return;
+  }
+  box.innerHTML = queries.map((q, i) => `
+    <div class="m-item" data-id="${esc(q.id)}">
+      <div class="info">
+        <div class="name">${esc(q.name)}${q.joinKey ? ` <span style="font-size:11px; color:var(--accent); font-weight:400;">🔗${esc(q.joinKey)}</span>` : ''}</div>
+        <div class="desc">${esc(q.description || '（無描述）')}</div>
+      </div>
+      <button class="icon-btn" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="icon-btn" data-act="down" ${i === queries.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="secondary" data-act="edit">編輯</button>
+      <button class="danger" data-act="del">刪除</button>
+    </div>
+  `).join('');
+  box.querySelectorAll('.m-item').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelectorAll('button').forEach(btn => {
+      const act = btn.dataset.act;
+      btn.addEventListener('click', () => {
+        if (act === 'up') moveQuery(id, -1);
+        else if (act === 'down') moveQuery(id, 1);
+        else if (act === 'edit') editQuery(id);
+        else if (act === 'del') deleteQuery(id);
+      });
+    });
+  });
+}
+
+function showEditor() {
+  $('manageEditorSection').hidden = false;
+  $('manageListSection').hidden = true;
+}
+function hideEditor() {
+  $('manageEditorSection').hidden = true;
+  $('manageListSection').hidden = false;
+}
+
+/* ==================================================
+ * Drawer (legacy — redirects to tabs)
  * ================================================== */
 function openDrawer(view = 'list') {
-  $('drawer').classList.add('open');
-  $('drawer').setAttribute('aria-hidden', 'false');
-  if (view === 'list') renderDrawerList();
+  switchTab('manage');
 }
 function closeDrawer() {
-  $('drawer').classList.remove('open');
-  $('drawer').setAttribute('aria-hidden', 'true');
+  // no-op in tab mode
   editingId = null;
+  hideEditor();
 }
 
 function renderSyncPanel() {
@@ -1290,70 +1496,44 @@ function renderSyncPanel() {
         </label>
       </div>
       ${syncSource === 'sheet' ? `
+        <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">📥 讀取 URL（CSV 發布網址）</div>
         <input type="text" id="sheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv" value="${esc(sheetUrl)}" style="font-size:12px;">
         <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap;">
           <button onclick="applySheetUrl()">套用 URL</button>
           ${sheet ? '<button class="secondary" onclick="syncNow()">🔄 重新抓取</button>' : ''}
           <div style="flex:1; font-size:12px; text-align:right;">${statusHtml}</div>
         </div>
-        ${sheet ? '<div class="help" style="margin-top:10px; color:var(--accent);">💡 Sheet 模式：在工具編輯時會自動把該列 CSV 複製到剪貼簿，到 Sheet 貼上即可（沒貼的話，下次「🔄 重新抓取」會回到 Sheet 版本）</div>' : ''}
-        <details style="margin-top:10px;">
-          <summary>📖 怎麼設定？</summary>
-          <ol style="font-size:12px; color:var(--text-muted); padding-left:20px; margin:8px 0 0; line-height:1.7;">
-            <li>Google Sheet 第一列標題：<code>name, description, idColumn, accountColumn, joinKey, sql</code></li>
-            <li>「檔案 → 分享 → 發佈到網路」，格式選「逗號分隔值 (.csv)」</li>
-            <li>複製產生的 URL 貼到上方，按「套用 URL」</li>
-            <li>想要一份初始 CSV？按下面的「📋 複製 CSV」，到 Sheet 的 A1 格貼上即可</li>
-          </ol>
-        </details>
+
+        <div style="margin-top:14px; padding-top:14px; border-top:1px dashed var(--border);">
+          <div style="font-size:11px; color:var(--text-muted); margin-bottom:4px;">✨ 自動寫入 URL（Apps Script Web App）<span style="color:var(--text-subtle);">— 選填，設定後新增/編輯自動寫回 Sheet</span></div>
+          <input type="text" id="appsUrlInput" placeholder="https://script.google.com/macros/s/.../exec" value="${esc(appsUrl)}" style="font-size:12px;">
+          <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap;">
+            <button onclick="applyAppsUrl()">套用</button>
+            <button class="secondary" onclick="copyAppsScriptCode()">📋 複製 Apps Script 程式碼</button>
+          </div>
+          <details style="margin-top:10px;">
+            <summary>📖 Apps Script 設定步驟（5 分鐘、一次就好）</summary>
+            <ol style="font-size:12px; color:var(--text-muted); padding-left:20px; margin:8px 0 0; line-height:1.8;">
+              <li>到你的 Google Sheet → 頂端「擴充功能 → Apps Script」</li>
+              <li>把預設的 code 全刪，按左邊「📋 複製 Apps Script 程式碼」後貼上</li>
+              <li>按上面💾圖示存檔（名稱隨意）</li>
+              <li>右上「部署 → 新增部署作業」</li>
+              <li>齒輪圖示 ⚙ → 選「<b>網路應用程式</b>」</li>
+              <li>執行身分：<b>我</b>　存取權：<b>任何人</b></li>
+              <li>按「部署」→ 授權（點「<b>進階 → 前往未驗證應用程式</b> → 允許」）</li>
+              <li>複製出現的「<b>網路應用程式 URL</b>」貼到上面，按「套用」</li>
+            </ol>
+          </details>
+        </div>
+
+        ${sheet && !appsUrl ? '<div class="help" style="margin-top:10px; color:var(--warning);">💡 目前只讀不寫：新增/編輯會複製 CSV 列到剪貼簿，要手動貼到 Sheet。設定上方 Apps Script URL 後可自動寫入。</div>' : ''}
+        ${sheet && appsUrl ? '<div class="help" style="margin-top:10px; color:var(--success);">✅ 雙向同步啟用中：新增/編輯會自動寫入 Sheet</div>' : ''}
       ` : ''}
     </div>
   `;
 }
 
-function renderDrawerList() {
-  $('drawerTitle').textContent = '管理查詢';
-  const body = $('drawerBody');
-  const sheet = isSheetMode();
-
-  const items = queries.length ? queries.map((q, i) => `
-    <div class="m-item" data-id="${esc(q.id)}">
-      <div class="info">
-        <div class="name">${esc(q.name)}${q.joinKey ? ` <span style="font-size:11px; color:var(--accent); font-weight:400;">🔗${esc(q.joinKey)}</span>` : ''}</div>
-        <div class="desc">${esc(q.description || '（無描述）')}</div>
-      </div>
-      <button class="icon-btn" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
-      <button class="icon-btn" data-act="down" ${i === queries.length - 1 ? 'disabled' : ''}>↓</button>
-      <button class="secondary" data-act="edit">編輯</button>
-      <button class="danger" data-act="del">刪除</button>
-    </div>
-  `).join('') : '<div class="empty-state"><div class="icon">📝</div><div>尚無查詢</div></div>';
-
-  const tools = `
-    <div class="drawer-tools">
-      <button onclick="newQuery()">＋ 新增查詢</button>
-      <div style="flex:1"></div>
-    </div>
-  `;
-
-  body.innerHTML = renderSyncPanel() + tools + `<div id="drawerListItems">${items}</div>`;
-
-  body.querySelectorAll('.m-item').forEach(row => {
-    const id = row.dataset.id;
-    row.querySelectorAll('button').forEach(btn => {
-      const act = btn.dataset.act;
-      btn.addEventListener('click', () => {
-        if (act === 'up') moveQuery(id, -1);
-        else if (act === 'down') moveQuery(id, 1);
-        else if (act === 'edit') editQuery(id);
-        else if (act === 'del') deleteQuery(id);
-      });
-    });
-  });
-
-  const imp = $('importInput');
-  if (imp) imp.addEventListener('change', handleImport);
-}
+// (舊的 renderDrawerList 已改由新的 renderManageTab + renderManageList 取代)
 
 function switchSource(s) {
   syncSource = s;
@@ -1365,13 +1545,38 @@ function switchSource(s) {
     selectedIds = loadSelected().filter(id => validIds.has(id));
     if (!selectedIds.length) selectedIds = queries.map(q => q.id);
     toast('已切換至本機儲存', 'success');
-    renderDrawerList();
+    renderManageTab();
     renderQueryList();
     updateActionBar();
     updateStepStates();
   } else {
-    renderDrawerList();
+    renderManageTab();
   }
+}
+
+async function applyAppsUrl() {
+  const url = ($('appsUrlInput').value || '').trim();
+  if (!url) {
+    appsUrl = '';
+    localStorage.removeItem(APPS_URL_KEY);
+    toast('已清除 Apps Script URL', 'success');
+    renderManageTab();
+    return;
+  }
+  if (!url.includes('script.google.com')) {
+    if (!confirm('URL 看起來不像 Apps Script Web App。確定套用？')) return;
+  }
+  appsUrl = url;
+  localStorage.setItem(APPS_URL_KEY, url);
+  // 測試連線：寫入一次目前資料
+  toast('測試連線中...', 'info', 1500);
+  const result = await writeToSheet(queries);
+  if (result.ok) {
+    toast(`✅ Apps Script 連線成功！已寫入 ${result.count} 筆，以後自動同步`, 'success', 4500);
+  } else {
+    toast(`⚠ 連線失敗：${result.reason}。請檢查 URL 和 Apps Script 設定`, 'error', 6000);
+  }
+  renderManageTab();
 }
 
 async function applySheetUrl() {
@@ -1389,14 +1594,14 @@ async function applySheetUrl() {
     selectedIds = queries.map(q => q.id);
     saveSelected();
     toast(`✓ 載入 ${queries.length} 筆查詢`, 'success');
-    renderDrawerList();
+    renderManageTab();
     renderQueryList();
     updateActionBar();
     updateStepStates();
   } catch (err) {
     lastSyncStatus = { ok: false, message: err.message };
     toast('載入失敗：' + err.message, 'error', 5000);
-    renderDrawerList();
+    renderManageTab();
   }
 }
 
@@ -1410,13 +1615,13 @@ async function syncNow() {
     selectedIds = loadSelected().filter(id => validIds.has(id));
     if (!selectedIds.length) selectedIds = queries.map(q => q.id);
     toast(`✓ 已同步 ${queries.length} 筆`, 'success');
-    renderDrawerList();
+    renderManageTab();
     renderQueryList();
     updateActionBar();
   } catch (err) {
     lastSyncStatus = { ok: false, message: err.message };
     toast('同步失敗：' + err.message, 'error', 5000);
-    renderDrawerList();
+    renderManageTab();
   }
 }
 
@@ -1432,22 +1637,27 @@ async function copyAsCSV() {
 
 function newQuery() {
   editingId = null;
-  if (!$('drawer').classList.contains('open')) {
-    $('drawer').classList.add('open');
-    $('drawer').setAttribute('aria-hidden', 'false');
-  }
+  switchTab('manage');
   renderEditor({});
+  showEditor();
 }
 function editQuery(id) {
   const q = queries.find(x => x.id === id);
   if (!q) return;
   editingId = id;
+  switchTab('manage');
   renderEditor(q);
+  showEditor();
+}
+
+function cancelEdit() {
+  editingId = null;
+  hideEditor();
 }
 
 function renderEditor(q) {
-  $('drawerTitle').textContent = editingId ? '編輯查詢' : '新增查詢';
-  $('drawerBody').innerHTML = `
+  $('manageEditorTitle').textContent = editingId ? '編輯查詢' : '新增查詢';
+  $('manageEditorArea').innerHTML = `
     <div class="form-row" style="background: var(--surface-2); border: 1px dashed var(--border-strong); padding: 12px; border-radius: var(--radius);">
       <label>🪄 貼既有 SQL 自動解析<span style="color:var(--text-subtle);font-weight:400;">（選用 — 一鍵填好下面欄位）</span></label>
       <textarea id="edPaste" style="min-height: 110px; font-size: 12.5px;" placeholder="貼你現有的 SQL 進來 — 會自動把會員 IN (...) 條件換成 {FILTER}，並填入欄位名稱"></textarea>
@@ -1485,7 +1695,7 @@ function renderEditor(q) {
       <div class="help"><code>{FILTER}</code> 是特殊佔位符，會被替換成對應的 IN 條件。可放多個。</div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
-      <button class="ghost" onclick="renderDrawerList()">取消</button>
+      <button class="ghost" onclick="cancelEdit()">取消</button>
       <button onclick="saveQuery()">儲存</button>
     </div>
   `;
@@ -1614,7 +1824,7 @@ function autoParseSql() {
   $('edPaste').value = '';
 }
 
-function saveQuery() {
+async function saveQuery() {
   const name = $('edName').value.trim();
   const sql = $('edSql').value.trim();
   const idCol = $('edIdCol').value.trim();
@@ -1646,7 +1856,16 @@ function saveQuery() {
   }
   saveQueries(); saveSelected();
   closeDrawer();
-  if (isSheetMode()) {
+  if (isSheetMode() && appsUrl) {
+    // 自動寫入 Sheet
+    toast('同步到 Sheet 中...', 'info', 1500);
+    const result = await writeToSheet(queries);
+    if (result.ok) {
+      toast(wasNew ? `✅ 已新增並同步到 Sheet：${name}` : `✅ 已更新並同步到 Sheet：${name}`, 'success');
+    } else {
+      toast(`⚠ 本機已存，但 Sheet 寫入失敗：${result.reason}`, 'error', 5500);
+    }
+  } else if (isSheetMode()) {
     copyRowToClipboard(data, wasNew);
   } else if (syncSource === 'sheet') {
     toast(`⚠ 尚未設定 Sheet URL — 「${name}」暫存於本機。請點右上徽章設定 URL`, 'warning', 6000);
@@ -1654,34 +1873,44 @@ function saveQuery() {
     toast(wasNew ? `✓ 已新增：${name}` : `✓ 已更新：${name}`, 'success');
   }
   editingId = null;
-  renderDrawerList();
+  renderManageTab();
   renderQueryList();
   updateActionBar();
   updateStepStates();
 }
 
-function deleteQuery(id) {
+async function deleteQuery(id) {
   const q = queries.find(x => x.id === id);
   if (!q) return;
   if (!confirm(`確定要刪除「${q.name}」？`)) return;
   queries = queries.filter(x => x.id !== id);
   selectedIds = selectedIds.filter(x => x !== id);
   saveQueries(); saveSelected();
-  renderDrawerList();
+  renderManageTab();
   renderQueryList();
   updateActionBar();
   updateStepStates();
-  toast('已刪除「' + q.name + '」', 'success');
+  if (isSheetMode() && appsUrl) {
+    const result = await writeToSheet(queries);
+    if (result.ok) toast(`✅ 已刪除並同步：${q.name}`, 'success');
+    else toast(`⚠ 本機已刪，但 Sheet 寫入失敗：${result.reason}`, 'error', 5000);
+  } else {
+    toast('已刪除「' + q.name + '」', 'success');
+  }
 }
 
-function moveQuery(id, dir) {
+async function moveQuery(id, dir) {
   const i = queries.findIndex(x => x.id === id);
   const j = i + dir;
   if (i < 0 || j < 0 || j >= queries.length) return;
   [queries[i], queries[j]] = [queries[j], queries[i]];
   saveQueries();
-  renderDrawerList();
+  renderManageTab();
   renderQueryList();
+  if (isSheetMode() && appsUrl) {
+    const result = await writeToSheet(queries);
+    if (!result.ok) toast(`⚠ 排序已更新，但 Sheet 寫入失敗：${result.reason}`, 'error', 5000);
+  }
 }
 
 function resetQueries() {
@@ -1689,7 +1918,7 @@ function resetQueries() {
   queries = JSON.parse(JSON.stringify(DEFAULT_QUERIES));
   selectedIds = queries.map(q => q.id);
   saveQueries(); saveSelected();
-  renderDrawerList();
+  renderManageTab();
   renderQueryList();
   updateActionBar();
   updateStepStates();
@@ -1721,7 +1950,7 @@ async function handleImport(e) {
     queries = data;
     selectedIds = queries.map(q => q.id);
     saveQueries(); saveSelected();
-    renderDrawerList();
+    renderManageTab();
     renderQueryList();
     updateActionBar();
     updateStepStates();
