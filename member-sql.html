@@ -1,0 +1,1990 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SQL 產生器</title>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+<style>
+  :root {
+    --bg: #0a0e1a;
+    --surface: #111827;
+    --surface-2: #1a2234;
+    --surface-3: #243048;
+    --border: #1f2a3d;
+    --border-strong: #334155;
+    --text: #f1f5f9;
+    --text-muted: #94a3b8;
+    --text-subtle: #64748b;
+    --accent: #60a5fa;
+    --accent-hover: #3b82f6;
+    --accent-soft: rgba(96, 165, 250, 0.12);
+    --success: #34d399;
+    --success-soft: rgba(52, 211, 153, 0.12);
+    --warning: #fbbf24;
+    --warning-soft: rgba(251, 191, 36, 0.12);
+    --danger: #f87171;
+    --danger-soft: rgba(248, 113, 113, 0.12);
+    --radius: 8px;
+    --radius-lg: 12px;
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.5);
+    --font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable", "Segoe UI", "PingFang TC", "Microsoft JhengHei", "Helvetica Neue", sans-serif;
+    --font-mono: "JetBrains Mono", "SF Mono", Consolas, "Courier New", monospace;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.55;
+    min-height: 100vh;
+    padding-bottom: 96px;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection { background: var(--accent); color: #0a0e1a; }
+
+  /* ========== Layout ========== */
+  .app-header {
+    padding: 24px 28px 18px;
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+  .app-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .app-title .logo {
+    width: 36px; height: 36px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, var(--accent) 0%, #a78bfa 100%);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 700; color: #0a0e1a;
+  }
+  .app-title h1 {
+    margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.01em;
+  }
+  .app-title .subtitle {
+    margin: 2px 0 0; font-size: 12px; color: var(--text-muted);
+  }
+  .shortcut-hint {
+    font-size: 11px; color: var(--text-subtle);
+    display: flex; gap: 8px; align-items: center;
+  }
+  .mode-badge {
+    padding: 6px 12px;
+    border-radius: 100px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mode-badge:hover { border-color: var(--accent); color: var(--text); }
+  .mode-badge.sheet {
+    color: var(--accent); background: var(--accent-soft); border-color: rgba(96, 165, 250, 0.35);
+  }
+  .mode-badge.warning {
+    color: var(--warning); background: var(--warning-soft); border-color: rgba(251, 191, 36, 0.35);
+  }
+  .mode-badge .count {
+    opacity: 0.7;
+    font-family: var(--font-mono);
+    font-size: 11px;
+  }
+  kbd {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    padding: 2px 6px;
+    background: var(--surface-2);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    color: var(--text-muted);
+  }
+
+  main {
+    max-width: 960px;
+    margin: 0 auto;
+    padding: 0 28px;
+  }
+
+  /* ========== Steps ========== */
+  .step {
+    margin-bottom: 20px;
+  }
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+  .step-num {
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600;
+    font-family: var(--font-mono);
+  }
+  .step.active .step-num {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+  .step.done .step-num {
+    background: var(--success-soft);
+    color: var(--success);
+    border-color: var(--success);
+  }
+  .step-title {
+    font-size: 15px; font-weight: 600; letter-spacing: -0.01em;
+  }
+  .step-header .spacer { flex: 1; }
+  .step-body {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 16px;
+  }
+
+  /* ========== Dropzone ========== */
+  .dropzone {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 92px;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+    background: var(--surface-2);
+    margin-bottom: 12px;
+  }
+  .dropzone:hover {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .dropzone.drag-over {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .dropzone-idle,
+  .dropzone-file {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+  }
+  .dropzone-file {
+    flex-direction: row;
+    gap: 10px;
+    color: var(--accent);
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .dropzone-icon {
+    font-size: 22px;
+    line-height: 1;
+    opacity: 0.7;
+  }
+  .dropzone-text {
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .dropzone-text b { color: var(--text); font-weight: 600; }
+
+  /* Hide the non-active variant completely — no layout, no render */
+  .dropzone .dropzone-file { display: none; }
+  .dropzone.has-file .dropzone-idle { display: none; }
+  .dropzone.has-file .dropzone-file { display: flex; }
+
+  /* Hidden file input: no layout impact */
+  #fileInput {
+    position: absolute;
+    width: 1px; height: 1px;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  /* ========== Textarea ========== */
+  .textarea-wrap { position: relative; }
+  textarea, input[type=text] {
+    width: 100%;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 10px 12px;
+    font-family: var(--font-mono);
+    font-size: 13px;
+    line-height: 1.6;
+    transition: border-color 0.15s;
+  }
+  textarea {
+    min-height: 100px;
+    resize: vertical;
+  }
+  textarea:focus, input[type=text]:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-soft);
+  }
+  .parse-preview {
+    margin-top: 8px;
+    padding: 8px 12px;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .parse-preview.empty {
+    color: var(--text-subtle);
+    font-style: italic;
+  }
+  .parse-preview b { color: var(--text); font-weight: 600; }
+
+  /* ========== Buttons ========== */
+  button {
+    background: var(--accent);
+    color: #0a0e1a;
+    border: none;
+    border-radius: var(--radius);
+    padding: 8px 14px;
+    font-weight: 600;
+    cursor: pointer;
+    font-size: 13px;
+    font-family: inherit;
+    transition: all 0.1s;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  button:hover { background: var(--accent-hover); transform: translateY(-1px); }
+  button:active { transform: translateY(0); }
+  button.primary-lg {
+    padding: 10px 22px; font-size: 14px;
+    box-shadow: 0 4px 12px rgba(96, 165, 250, 0.25);
+  }
+  button.secondary {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+  }
+  button.secondary:hover {
+    background: var(--surface-3);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  button.ghost {
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+  }
+  button.ghost:hover {
+    background: var(--surface-2);
+    color: var(--text);
+  }
+  button.danger {
+    background: transparent;
+    color: var(--danger);
+    border: 1px solid var(--border);
+  }
+  button.danger:hover {
+    background: var(--danger-soft);
+    border-color: var(--danger);
+  }
+  button.icon-btn {
+    padding: 7px;
+    background: transparent;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    width: 32px; height: 32px;
+    justify-content: center;
+  }
+  button.icon-btn:hover {
+    background: var(--surface-2);
+    color: var(--text);
+    border-color: var(--border-strong);
+  }
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    transform: none !important;
+  }
+
+  /* ========== Query cards ========== */
+  .q-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 10px;
+  }
+  .q-card {
+    position: relative;
+    padding: 12px 14px;
+    background: var(--surface-2);
+    border: 1.5px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .q-card:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-3);
+  }
+  .q-card.selected {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .q-card.disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .q-card-checkbox {
+    position: absolute;
+    top: 12px; right: 12px;
+    width: 18px; height: 18px;
+    border: 1.5px solid var(--border-strong);
+    border-radius: 4px;
+    background: var(--surface);
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s;
+  }
+  .q-card.selected .q-card-checkbox {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+  .q-card-checkbox svg {
+    width: 12px; height: 12px; opacity: 0;
+    color: #0a0e1a;
+  }
+  .q-card.selected .q-card-checkbox svg { opacity: 1; }
+  .q-card-name {
+    font-weight: 600;
+    font-size: 14px;
+    margin-bottom: 3px;
+    padding-right: 26px;
+  }
+  .q-card-desc {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+    line-height: 1.45;
+  }
+  .q-badges {
+    display: flex; gap: 6px; flex-wrap: wrap;
+  }
+  .q-badge {
+    font-size: 10.5px;
+    font-family: var(--font-mono);
+    padding: 2px 7px;
+    border-radius: 4px;
+    background: var(--surface);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    display: inline-flex; gap: 4px; align-items: center;
+  }
+  .q-badge.id { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+  .q-badge.acc { color: var(--warning); border-color: var(--warning-soft); background: var(--warning-soft); }
+  .q-badge.incompat {
+    color: var(--text-subtle);
+    background: transparent;
+  }
+  .q-add {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    padding: 14px;
+    background: transparent;
+    border: 1.5px dashed var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--text-muted);
+    min-height: 96px;
+    user-select: none;
+  }
+  .q-add:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .q-add .plus {
+    font-size: 24px;
+    font-weight: 300;
+    line-height: 1;
+  }
+  .q-add .label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .q-add.empty {
+    grid-column: 1 / -1;
+    padding: 40px 20px;
+    min-height: 140px;
+  }
+  .q-add.empty .plus { font-size: 36px; }
+  .q-add.empty .label { font-size: 15px; font-weight: 600; margin-top: 4px; }
+  .q-add.empty .hint { font-size: 12px; color: var(--text-subtle); margin-top: 4px; }
+
+  .empty-state {
+    text-align: center;
+    padding: 28px 16px;
+    color: var(--text-subtle);
+    font-size: 13px;
+  }
+  .empty-state .icon { font-size: 28px; opacity: 0.5; margin-bottom: 6px; }
+
+  /* ========== Output ========== */
+  .output-meta {
+    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 14px;
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    align-items: center;
+    font-size: 13px;
+  }
+  .output-meta .label { color: var(--text-muted); margin-right: 4px; }
+  .output-meta b { font-weight: 600; }
+  .type-pill {
+    padding: 3px 10px;
+    border-radius: 100px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-weight: 600;
+    font-size: 12px;
+  }
+  .type-pill.account {
+    background: var(--warning-soft);
+    color: var(--warning);
+  }
+
+  .sql-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    margin-bottom: 12px;
+  }
+  .sql-card-header {
+    padding: 12px 16px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface-2);
+  }
+  .sql-card-header .title {
+    font-weight: 600;
+    font-size: 14px;
+  }
+  .sql-card-header .desc {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .sql-card-header .spacer { flex: 1; }
+  pre {
+    background: var(--surface);
+    margin: 0;
+    padding: 14px 16px;
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.65;
+    max-height: 440px;
+    color: #cbd5e1;
+  }
+  pre .kw { color: #c084fc; font-weight: 500; }
+  pre .str { color: #86efac; }
+  pre .num { color: #fcd34d; }
+  pre .com { color: var(--text-subtle); font-style: italic; }
+
+  .warn-inline {
+    padding: 10px 14px;
+    background: var(--warning-soft);
+    border: 1px solid rgba(251, 191, 36, 0.3);
+    border-radius: var(--radius);
+    color: var(--warning);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+  .err-inline {
+    padding: 10px 14px;
+    background: var(--danger-soft);
+    border: 1px solid rgba(248, 113, 113, 0.3);
+    border-radius: var(--radius);
+    color: var(--danger);
+    font-size: 13px;
+    margin-bottom: 12px;
+  }
+
+  /* ========== Action bar ========== */
+  .action-bar {
+    position: fixed;
+    bottom: 0; left: 0; right: 0;
+    background: rgba(10, 14, 26, 0.85);
+    backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+    padding: 12px 28px;
+    z-index: 50;
+  }
+  .action-bar-inner {
+    max-width: 960px;
+    margin: 0 auto;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .action-summary {
+    color: var(--text-muted);
+    font-size: 13px;
+    flex: 1;
+  }
+  .action-summary b { color: var(--text); font-weight: 600; }
+
+  /* ========== Drawer ========== */
+  .drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+  }
+  .drawer.open { pointer-events: auto; opacity: 1; }
+  .drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+  }
+  .drawer-panel {
+    position: absolute;
+    top: 0; right: 0; bottom: 0;
+    width: min(560px, 100%);
+    background: var(--bg);
+    border-left: 1px solid var(--border);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(100%);
+    transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+  }
+  .drawer.open .drawer-panel { transform: translateX(0); }
+  .drawer-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .drawer-header h2 {
+    margin: 0; font-size: 16px; font-weight: 600;
+    flex: 1;
+  }
+  .drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px 20px;
+  }
+  .drawer-tools {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--border);
+  }
+  .m-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 8px;
+  }
+  .m-item .info { flex: 1; min-width: 0; }
+  .m-item .info .name { font-weight: 600; font-size: 13.5px; }
+  .m-item .info .desc { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .m-item button { padding: 6px 10px; font-size: 12px; }
+
+  .file-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 12px;
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .file-label:hover { background: var(--surface-3); color: var(--accent); border-color: var(--accent); }
+  .file-label input { display: none; }
+
+  /* Editor form */
+  .form-row { margin-bottom: 12px; }
+  .form-row label {
+    display: block; font-size: 12px; color: var(--text-muted);
+    margin-bottom: 4px; font-weight: 500;
+  }
+  .form-row .help { font-size: 11.5px; color: var(--text-subtle); margin-top: 4px; }
+  .form-row code {
+    font-family: var(--font-mono); font-size: 11.5px;
+    background: var(--surface-2); padding: 1px 5px; border-radius: 3px;
+    color: var(--accent);
+  }
+
+  /* ========== Toasts ========== */
+  .toasts {
+    position: fixed;
+    top: 20px; right: 20px;
+    z-index: 200;
+    display: flex; flex-direction: column; gap: 8px;
+    pointer-events: none;
+  }
+  .toast {
+    padding: 10px 14px;
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+    font-size: 13px;
+    color: var(--text);
+    min-width: 220px; max-width: 360px;
+    animation: toastIn 0.2s ease;
+    pointer-events: auto;
+  }
+  .toast.success { border-left-color: var(--success); }
+  .toast.warning { border-left-color: var(--warning); }
+  .toast.error { border-left-color: var(--danger); }
+  .toast.leaving { animation: toastOut 0.2s ease forwards; }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateX(12px); }
+    to { opacity: 1; transform: translateX(0); }
+  }
+  @keyframes toastOut {
+    to { opacity: 0; transform: translateX(12px); }
+  }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+    padding: 1px 5px;
+    background: var(--surface-2);
+    border-radius: 3px;
+  }
+  details { margin-top: 8px; }
+  summary {
+    cursor: pointer; color: var(--text-muted); font-size: 12px;
+    user-select: none;
+  }
+  summary:hover { color: var(--text); }
+
+  @media (max-width: 640px) {
+    .app-header, main { padding-left: 16px; padding-right: 16px; }
+    .action-bar { padding-left: 16px; padding-right: 16px; }
+    .shortcut-hint { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="app-header">
+  <div class="app-title">
+    <div class="logo">S</div>
+    <div>
+      <h1>SQL 產生器</h1>
+      <div class="subtitle">貼清單或上傳 Excel，一鍵產出 SQL</div>
+    </div>
+  </div>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <span id="modeBadge" class="mode-badge" onclick="openDrawer()" title="點我切換儲存位置"></span>
+    <div class="shortcut-hint"><span><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></div>
+  </div>
+</div>
+
+<main>
+  <!-- Step 1 -->
+  <section class="step" id="step1">
+    <div class="step-header">
+      <span class="step-num">1</span>
+      <span class="step-title">會員清單</span>
+    </div>
+    <div class="step-body">
+      <label class="dropzone" id="dropzone">
+        <div class="dropzone-idle">
+          <div class="dropzone-icon">📂</div>
+          <div class="dropzone-text">
+            <b>拖拉檔案到此</b> 或點擊選擇 — 支援 .xlsx / .xlsm / .csv / .txt
+          </div>
+        </div>
+        <div class="dropzone-file">
+          <span>📄</span>
+          <span id="fileName"></span>
+          <button class="icon-btn" id="removeFileBtn" title="移除" type="button" style="margin-left:8px;">✕</button>
+        </div>
+        <input type="file" id="fileInput" accept=".xlsx,.xlsm,.xls,.csv,.txt">
+      </label>
+
+      <div class="textarea-wrap">
+        <textarea id="inputArea" placeholder="一行一個，或用逗號／空白分隔：
+
+52758876
+52758898
+52758900
+
+或帳號格式：
+52758876@AP, 52758898@AP"></textarea>
+      </div>
+
+      <div id="parsePreview" class="parse-preview" style="display:none"></div>
+    </div>
+  </section>
+
+  <!-- Step 2 -->
+  <section class="step" id="step2">
+    <div class="step-header">
+      <span class="step-num">2</span>
+      <span class="step-title">選擇要產出的查詢</span>
+      <span class="spacer"></span>
+      <button class="ghost" onclick="selectAll(true)">全選</button>
+      <button class="ghost" onclick="selectAll(false)">全不選</button>
+    </div>
+    <div class="step-body">
+      <div id="queryList" class="q-grid"></div>
+    </div>
+  </section>
+
+  <!-- Step 3 -->
+  <section class="step" id="step3">
+    <div class="step-header">
+      <span class="step-num">3</span>
+      <span class="step-title">產出結果</span>
+    </div>
+    <div id="output">
+      <div class="step-body">
+        <div class="empty-state">
+          <div class="icon">✨</div>
+          <div>完成上面兩步後按「產生 SQL」，結果會顯示在這裡</div>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<!-- Sticky action bar -->
+<div class="action-bar">
+  <div class="action-bar-inner">
+    <div class="action-summary" id="actionSummary">尚未輸入</div>
+    <button class="primary-lg" id="genBtn">產生 SQL ➜</button>
+  </div>
+</div>
+
+<!-- Drawer -->
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <div class="drawer-backdrop" onclick="closeDrawer()"></div>
+  <div class="drawer-panel">
+    <div class="drawer-header">
+      <h2 id="drawerTitle">管理查詢</h2>
+      <button class="icon-btn" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="drawer-body" id="drawerBody">
+      <!-- Dynamic content: list or editor -->
+    </div>
+  </div>
+</aside>
+
+<!-- Toasts -->
+<div class="toasts" id="toasts"></div>
+
+<script>
+/* ==================================================
+ * Default query templates — intentionally empty.
+ * Queries are managed by user via 新增 or Google Sheet sync.
+ * ================================================== */
+const DEFAULT_QUERIES = [];
+
+/* ==================================================
+ * State
+ * ================================================== */
+const STORE_KEY = 'member_sql_queries_v1';
+const SELECT_KEY = 'member_sql_selected_v1';
+const SOURCE_KEY = 'member_sql_source_v1';
+const SHEET_URL_KEY = 'member_sql_sheet_url_v1';
+
+let queries = [];
+let selectedIds = [];
+let editingId = null;
+let currentFile = null;
+let syncSource = localStorage.getItem(SOURCE_KEY) || 'local'; // 'local' | 'sheet'
+let sheetUrl = localStorage.getItem(SHEET_URL_KEY) || '';
+let lastSyncStatus = null; // { ok, message, count, at }
+
+function isSheetMode() { return syncSource === 'sheet' && !!sheetUrl; }
+
+function loadQueries() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return JSON.parse(JSON.stringify(DEFAULT_QUERIES));
+}
+function saveQueries() { localStorage.setItem(STORE_KEY, JSON.stringify(queries)); }
+function loadSelected() {
+  try {
+    const raw = localStorage.getItem(SELECT_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return queries.map(q => q.id);
+}
+function saveSelected() { localStorage.setItem(SELECT_KEY, JSON.stringify(selectedIds)); }
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+/* ==================================================
+ * CSV helpers (Google Sheet sync)
+ * ================================================== */
+function parseCSV(text) {
+  const rows = []; let row = []; let field = ''; let inQ = false;
+  const n = text.length; let i = 0;
+  while (i < n) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i += 2; continue; }
+        inQ = false; i++; continue;
+      }
+      field += c; i++; continue;
+    }
+    if (c === '"') { inQ = true; i++; continue; }
+    if (c === ',') { row.push(field); field = ''; i++; continue; }
+    if (c === '\r' || c === '\n') {
+      if (c === '\r' && text[i + 1] === '\n') i++;
+      row.push(field); field = '';
+      if (row.length > 1 || (row[0] && row[0].length)) rows.push(row);
+      row = []; i++; continue;
+    }
+    field += c; i++;
+  }
+  if (field.length || row.length) { row.push(field); rows.push(row); }
+  return rows;
+}
+
+function queriesToCSV(arr) {
+  const header = ['name', 'description', 'idColumn', 'accountColumn', 'joinKey', 'sql'];
+  const lines = [header.join(',')];
+  for (const q of arr) lines.push(queryToCSVRow(q));
+  return lines.join('\n');
+}
+
+function queryToCSVRow(q) {
+  const escCell = s => {
+    s = String(s ?? '');
+    return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return [q.name, q.description || '', q.idColumn || '', q.accountColumn || '', q.joinKey || '', q.sql].map(escCell).join(',');
+}
+
+async function copyRowToClipboard(q, isNew) {
+  try {
+    await navigator.clipboard.writeText(queryToCSVRow(q));
+    if (!isSheetMode()) return;
+    if (isNew) {
+      toast(`📋 已複製 CSV 列 → 到 Sheet 最後一列貼上`, 'success', 5000);
+    } else {
+      toast(`📋 已複製 CSV 列 → 到 Sheet 找「${q.name}」那列取代`, 'success', 5000);
+    }
+  } catch {}
+}
+
+function csvToQueries(rows) {
+  if (!rows.length) throw new Error('CSV 是空的');
+  const headers = rows[0].map(h => (h || '').trim().toLowerCase());
+  const findCol = (...names) => {
+    for (const name of names) {
+      const idx = headers.indexOf(name.toLowerCase());
+      if (idx >= 0) return idx;
+    }
+    return -1;
+  };
+  const nameIdx = findCol('name', '名稱');
+  const descIdx = findCol('description', 'desc', '說明', '簡述');
+  const idColIdx = findCol('idcolumn', 'id_column', '編號欄位');
+  const accColIdx = findCol('accountcolumn', 'account_column', '帳號欄位');
+  const joinIdx = findCol('joinkey', 'join_key', '合併欄位', 'join');
+  const sqlIdx = findCol('sql', '語法');
+
+  if (nameIdx < 0) throw new Error('第一列缺少「name」欄');
+  if (sqlIdx < 0) throw new Error('第一列缺少「sql」欄');
+
+  const out = [];
+  for (let r = 1; r < rows.length; r++) {
+    const row = rows[r];
+    const name = (row[nameIdx] || '').trim();
+    const sql = (row[sqlIdx] || '').trim();
+    if (!name && !sql) continue;
+    out.push({
+      id: 'sheet_' + r,
+      name,
+      description: descIdx >= 0 ? (row[descIdx] || '').trim() : '',
+      idColumn: idColIdx >= 0 ? (row[idColIdx] || '').trim() : '',
+      accountColumn: accColIdx >= 0 ? (row[accColIdx] || '').trim() : '',
+      joinKey: joinIdx >= 0 ? (row[joinIdx] || '').trim() : '',
+      sql
+    });
+  }
+  if (!out.length) throw new Error('CSV 沒有任何有效資料列');
+  return out;
+}
+
+async function fetchFromSheet(url) {
+  const tryOne = async (u) => {
+    const resp = await fetch(u, { cache: 'no-store' });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const text = await resp.text();
+    if (text.trim().startsWith('<')) throw new Error('收到 HTML 而非 CSV — 請確認 URL 是「發佈到網路」產生的 CSV 網址');
+    return text;
+  };
+
+  let text;
+  try {
+    // 直連（正常瀏覽器環境會成功）
+    text = await tryOne(url);
+  } catch (err) {
+    // file:// 或沙箱環境 CORS 被擋 → 改走公開代理
+    const proxyUrl = 'https://corsproxy.io/?url=' + encodeURIComponent(url);
+    try {
+      text = await tryOne(proxyUrl);
+    } catch (err2) {
+      throw new Error(`${err.message}（代理亦失敗：${err2.message}）`);
+    }
+  }
+  return csvToQueries(parseCSV(text));
+}
+
+/* ==================================================
+ * Toasts
+ * ================================================== */
+function toast(msg, type = 'info', duration = 2800) {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type === 'info' ? '' : type);
+  el.textContent = msg;
+  $('toasts').appendChild(el);
+  setTimeout(() => {
+    el.classList.add('leaving');
+    setTimeout(() => el.remove(), 200);
+  }, duration);
+}
+
+/* ==================================================
+ * Input parsing
+ * ================================================== */
+function parseText(text) {
+  return text.split(/[,;\s\n\r\t]+/)
+    .map(t => t.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean);
+}
+function detectType(items) {
+  return items.some(x => x.includes('@')) ? 'account' : 'member_id';
+}
+function dedupe(items) {
+  const seen = new Set(); const out = [];
+  for (const x of items) if (x && !seen.has(x)) { seen.add(x); out.push(x); }
+  return out;
+}
+
+async function parseExcel(file) {
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const results = [];
+  for (const sheetName of wb.SheetNames) {
+    const sheet = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+    if (!rows.length) continue;
+    let targetCol = -1, headerRow = -1;
+    const maxScan = Math.min(5, rows.length);
+    for (let r = 0; r < maxScan; r++) {
+      const row = rows[r] || [];
+      for (let c = 0; c < row.length; c++) {
+        const val = String(row[c] ?? '').trim().toLowerCase();
+        if (val.includes('member') || val.includes('account')) {
+          targetCol = c; headerRow = r; break;
+        }
+      }
+      if (targetCol >= 0) break;
+    }
+    if (targetCol >= 0) {
+      for (let r = headerRow + 1; r < rows.length; r++) {
+        const v = (rows[r] || [])[targetCol];
+        if (v != null) {
+          const s = String(v).trim();
+          if (s) results.push(s);
+        }
+      }
+    }
+  }
+  return results;
+}
+
+/* ==================================================
+ * Input state + preview
+ * ================================================== */
+let inputCache = { items: [], source: '', unique: [], type: null };
+
+async function updateInputCache() {
+  let items = [], source = '';
+  if (currentFile) {
+    try {
+      const ext = currentFile.name.split('.').pop().toLowerCase();
+      if (['xlsx','xlsm','xls'].includes(ext)) {
+        items = await parseExcel(currentFile);
+      } else {
+        const text = await currentFile.text();
+        items = parseText(text);
+      }
+      source = currentFile.name;
+    } catch (err) {
+      toast('讀取檔案失敗：' + err.message, 'error');
+      return;
+    }
+  } else {
+    const text = $('inputArea').value;
+    if (text.trim()) {
+      items = parseText(text);
+      source = '文字輸入';
+    }
+  }
+  const unique = dedupe(items);
+  const type = unique.length ? detectType(unique) : null;
+  inputCache = { items, source, unique, type };
+  renderParsePreview();
+  renderQueryList();
+  updateActionBar();
+  updateStepStates();
+}
+
+function renderParsePreview() {
+  const box = $('parsePreview');
+  if (!inputCache.unique.length) {
+    box.className = 'parse-preview';
+    box.style.display = 'none';
+    return;
+  }
+  box.style.display = '';
+  const typeLabel = inputCache.type === 'member_id' ? '會員編號' : '會員帳號';
+  const pillClass = inputCache.type === 'account' ? 'type-pill account' : 'type-pill';
+  const dup = inputCache.items.length - inputCache.unique.length;
+  box.className = 'parse-preview';
+  box.innerHTML = `
+    <span><span class="${pillClass}">${typeLabel}</span></span>
+    <span>總筆數 <b>${inputCache.items.length}</b></span>
+    <span>去重後 <b>${inputCache.unique.length}</b></span>
+    ${dup > 0 ? `<span style="color:var(--warning)">重複 ${dup}</span>` : ''}
+    ${inputCache.source ? `<span style="margin-left:auto;color:var(--text-subtle)">來源：${esc(inputCache.source)}</span>` : ''}
+  `;
+}
+
+/* ==================================================
+ * Query card rendering
+ * ================================================== */
+function renderQueryList() {
+  const list = $('queryList');
+  if (!queries.length) {
+    list.innerHTML = `
+      <div class="q-add empty" onclick="newQuery()">
+        <div class="plus">＋</div>
+        <div class="label">新增第一個查詢</div>
+        <div class="hint">把你原本的 SQL 貼進去，一鍵解析</div>
+      </div>`;
+    updateModeBadge();
+    return;
+  }
+  const type = inputCache.type;
+  list.innerHTML = queries.map(q => {
+    const isSelected = selectedIds.includes(q.id);
+    const hasId = !!q.idColumn;
+    const hasAcc = !!q.accountColumn;
+    // Compat: only disable if input exists and this query doesn't support it
+    let disabled = false;
+    if (type === 'member_id' && !hasId) disabled = true;
+    if (type === 'account' && !hasAcc) disabled = true;
+
+    const badges = [];
+    if (hasId) badges.push(`<span class="q-badge id">編號 → ${esc(q.idColumn)}</span>`);
+    if (hasAcc) badges.push(`<span class="q-badge acc">帳號 → ${esc(q.accountColumn)}</span>`);
+    if (!hasId && !hasAcc) badges.push(`<span class="q-badge incompat">未設定欄位</span>`);
+    if (disabled) badges.push(`<span class="q-badge incompat">✗ 當前輸入不支援</span>`);
+
+    return `
+      <div class="q-card ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}"
+           data-id="${esc(q.id)}" data-disabled="${disabled}">
+        <div class="q-card-checkbox">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 8l3.5 3.5L13 4"/>
+          </svg>
+        </div>
+        <div class="q-card-name">${esc(q.name)}</div>
+        ${q.description ? `<div class="q-card-desc">${esc(q.description)}</div>` : ''}
+        <div class="q-badges">${badges.join('')}</div>
+      </div>
+    `;
+  }).join('') + `
+    <div class="q-add" onclick="newQuery()">
+      <div class="plus">＋</div>
+      <div class="label">新增查詢</div>
+    </div>
+  `;
+
+  list.querySelectorAll('.q-card').forEach(card => {
+    card.addEventListener('click', () => {
+      if (card.dataset.disabled === 'true') {
+        toast('此查詢不支援當前輸入類型', 'warning');
+        return;
+      }
+      const id = card.dataset.id;
+      if (selectedIds.includes(id)) {
+        selectedIds = selectedIds.filter(x => x !== id);
+      } else {
+        selectedIds = [...selectedIds, id];
+      }
+      saveSelected();
+      renderQueryList();
+      updateActionBar();
+      updateStepStates();
+    });
+  });
+
+  updateModeBadge();
+}
+
+function selectAll(on) {
+  if (on) {
+    selectedIds = queries
+      .filter(q => {
+        if (inputCache.type === 'member_id' && !q.idColumn) return false;
+        if (inputCache.type === 'account' && !q.accountColumn) return false;
+        return true;
+      })
+      .map(q => q.id);
+  } else {
+    selectedIds = [];
+  }
+  saveSelected();
+  renderQueryList();
+  updateActionBar();
+  updateStepStates();
+}
+
+/* ==================================================
+ * Action bar + step states
+ * ================================================== */
+function updateActionBar() {
+  const n = inputCache.unique.length;
+  const s = selectedIds.length;
+  let msg;
+  if (!n) msg = `尚未輸入`;
+  else if (!s) msg = `<b>${n}</b> 筆會員 ・ 尚未選查詢`;
+  else msg = `<b>${n}</b> 筆會員 ・ 已選 <b>${s}</b> 個查詢`;
+  $('actionSummary').innerHTML = msg;
+  $('genBtn').disabled = !(n && s);
+}
+
+function updateModeBadge() {
+  const badge = $('modeBadge');
+  if (!badge) return;
+  const n = queries.length;
+  if (isSheetMode()) {
+    badge.className = 'mode-badge sheet';
+    badge.innerHTML = `🔗 Google Sheet 同步中 <span class="count">${n} 筆</span>`;
+  } else if (syncSource === 'sheet') {
+    badge.className = 'mode-badge warning';
+    badge.innerHTML = `⚠ 尚未設定 Sheet URL`;
+  } else {
+    badge.className = 'mode-badge';
+    badge.innerHTML = `💾 本機儲存 <span class="count">${n} 筆</span>`;
+  }
+}
+
+function updateStepStates() {
+  const n = inputCache.unique.length;
+  const s = selectedIds.length;
+  $('step1').classList.toggle('done', n > 0);
+  $('step1').classList.toggle('active', n === 0);
+  $('step2').classList.toggle('done', s > 0);
+  $('step2').classList.toggle('active', n > 0 && s === 0);
+  $('step3').classList.toggle('active', n > 0 && s > 0);
+}
+
+/* ==================================================
+ * Drawer (management)
+ * ================================================== */
+function openDrawer(view = 'list') {
+  $('drawer').classList.add('open');
+  $('drawer').setAttribute('aria-hidden', 'false');
+  if (view === 'list') renderDrawerList();
+}
+function closeDrawer() {
+  $('drawer').classList.remove('open');
+  $('drawer').setAttribute('aria-hidden', 'true');
+  editingId = null;
+}
+
+function renderSyncPanel() {
+  const sheet = isSheetMode();
+  const statusHtml = lastSyncStatus
+    ? (lastSyncStatus.ok
+        ? `<span style="color:var(--success)">✓ ${esc(lastSyncStatus.message)}</span>`
+        : `<span style="color:var(--danger)">⚠ ${esc(lastSyncStatus.message)}</span>`)
+    : '';
+  return `
+    <div style="padding:12px 14px; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius); margin-bottom:14px;">
+      <div style="font-size:13px; font-weight:600; margin-bottom:10px;">🔗 查詢儲存位置</div>
+      <div style="display:flex; gap:14px; margin-bottom:10px;">
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="src" ${syncSource === 'local' ? 'checked' : ''} onchange="switchSource('local')">
+          <span>💾 本機（會隨瀏覽器清快取遺失）</span>
+        </label>
+        <label style="display:flex; align-items:center; gap:6px; cursor:pointer;">
+          <input type="radio" name="src" ${syncSource === 'sheet' ? 'checked' : ''} onchange="switchSource('sheet')">
+          <span>🔗 Google Sheet（雲端）</span>
+        </label>
+      </div>
+      ${syncSource === 'sheet' ? `
+        <input type="text" id="sheetUrlInput" placeholder="https://docs.google.com/spreadsheets/d/e/.../pub?output=csv" value="${esc(sheetUrl)}" style="font-size:12px;">
+        <div style="display:flex; gap:8px; margin-top:8px; align-items:center; flex-wrap:wrap;">
+          <button onclick="applySheetUrl()">套用 URL</button>
+          ${sheet ? '<button class="secondary" onclick="syncNow()">🔄 重新抓取</button>' : ''}
+          <div style="flex:1; font-size:12px; text-align:right;">${statusHtml}</div>
+        </div>
+        ${sheet ? '<div class="help" style="margin-top:10px; color:var(--accent);">💡 Sheet 模式：在工具編輯時會自動把該列 CSV 複製到剪貼簿，到 Sheet 貼上即可（沒貼的話，下次「🔄 重新抓取」會回到 Sheet 版本）</div>' : ''}
+        <details style="margin-top:10px;">
+          <summary>📖 怎麼設定？</summary>
+          <ol style="font-size:12px; color:var(--text-muted); padding-left:20px; margin:8px 0 0; line-height:1.7;">
+            <li>Google Sheet 第一列標題：<code>name, description, idColumn, accountColumn, joinKey, sql</code></li>
+            <li>「檔案 → 分享 → 發佈到網路」，格式選「逗號分隔值 (.csv)」</li>
+            <li>複製產生的 URL 貼到上方，按「套用 URL」</li>
+            <li>想要一份初始 CSV？按下面的「📋 複製 CSV」，到 Sheet 的 A1 格貼上即可</li>
+          </ol>
+        </details>
+      ` : ''}
+    </div>
+  `;
+}
+
+function renderDrawerList() {
+  $('drawerTitle').textContent = '管理查詢';
+  const body = $('drawerBody');
+  const sheet = isSheetMode();
+
+  const items = queries.length ? queries.map((q, i) => `
+    <div class="m-item" data-id="${esc(q.id)}">
+      <div class="info">
+        <div class="name">${esc(q.name)}${q.joinKey ? ` <span style="font-size:11px; color:var(--accent); font-weight:400;">🔗${esc(q.joinKey)}</span>` : ''}</div>
+        <div class="desc">${esc(q.description || '（無描述）')}</div>
+      </div>
+      <button class="icon-btn" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="icon-btn" data-act="down" ${i === queries.length - 1 ? 'disabled' : ''}>↓</button>
+      <button class="secondary" data-act="edit">編輯</button>
+      <button class="danger" data-act="del">刪除</button>
+    </div>
+  `).join('') : '<div class="empty-state"><div class="icon">📝</div><div>尚無查詢</div></div>';
+
+  const tools = `
+    <div class="drawer-tools">
+      <button onclick="newQuery()">＋ 新增查詢</button>
+      <div style="flex:1"></div>
+    </div>
+  `;
+
+  body.innerHTML = renderSyncPanel() + tools + `<div id="drawerListItems">${items}</div>`;
+
+  body.querySelectorAll('.m-item').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelectorAll('button').forEach(btn => {
+      const act = btn.dataset.act;
+      btn.addEventListener('click', () => {
+        if (act === 'up') moveQuery(id, -1);
+        else if (act === 'down') moveQuery(id, 1);
+        else if (act === 'edit') editQuery(id);
+        else if (act === 'del') deleteQuery(id);
+      });
+    });
+  });
+
+  const imp = $('importInput');
+  if (imp) imp.addEventListener('change', handleImport);
+}
+
+function switchSource(s) {
+  syncSource = s;
+  localStorage.setItem(SOURCE_KEY, s);
+  if (s === 'local') {
+    queries = loadQueries();
+    lastSyncStatus = null;
+    const validIds = new Set(queries.map(q => q.id));
+    selectedIds = loadSelected().filter(id => validIds.has(id));
+    if (!selectedIds.length) selectedIds = queries.map(q => q.id);
+    toast('已切換至本機儲存', 'success');
+    renderDrawerList();
+    renderQueryList();
+    updateActionBar();
+    updateStepStates();
+  } else {
+    renderDrawerList();
+  }
+}
+
+async function applySheetUrl() {
+  const url = ($('sheetUrlInput').value || '').trim();
+  if (!url) { toast('請先貼 URL', 'warning'); return; }
+  if (!url.includes('output=csv')) {
+    if (!confirm('此 URL 不像 CSV 發佈網址（缺 output=csv）。仍要套用嗎？')) return;
+  }
+  try {
+    const fromSheet = await fetchFromSheet(url);
+    sheetUrl = url;
+    localStorage.setItem(SHEET_URL_KEY, url);
+    queries = fromSheet;
+    lastSyncStatus = { ok: true, message: `同步 ${queries.length} 筆`, count: queries.length };
+    selectedIds = queries.map(q => q.id);
+    saveSelected();
+    toast(`✓ 載入 ${queries.length} 筆查詢`, 'success');
+    renderDrawerList();
+    renderQueryList();
+    updateActionBar();
+    updateStepStates();
+  } catch (err) {
+    lastSyncStatus = { ok: false, message: err.message };
+    toast('載入失敗：' + err.message, 'error', 5000);
+    renderDrawerList();
+  }
+}
+
+async function syncNow() {
+  if (!isSheetMode()) return;
+  try {
+    const fromSheet = await fetchFromSheet(sheetUrl);
+    queries = fromSheet;
+    lastSyncStatus = { ok: true, message: `同步 ${queries.length} 筆`, count: queries.length };
+    const validIds = new Set(queries.map(q => q.id));
+    selectedIds = loadSelected().filter(id => validIds.has(id));
+    if (!selectedIds.length) selectedIds = queries.map(q => q.id);
+    toast(`✓ 已同步 ${queries.length} 筆`, 'success');
+    renderDrawerList();
+    renderQueryList();
+    updateActionBar();
+  } catch (err) {
+    lastSyncStatus = { ok: false, message: err.message };
+    toast('同步失敗：' + err.message, 'error', 5000);
+    renderDrawerList();
+  }
+}
+
+async function copyAsCSV() {
+  const csv = queriesToCSV(queries);
+  try {
+    await navigator.clipboard.writeText(csv);
+    toast('✓ CSV 已複製，到 Google Sheet 的 A1 貼上', 'success', 3500);
+  } catch {
+    toast('複製失敗，請手動選取', 'error');
+  }
+}
+
+function newQuery() {
+  editingId = null;
+  if (!$('drawer').classList.contains('open')) {
+    $('drawer').classList.add('open');
+    $('drawer').setAttribute('aria-hidden', 'false');
+  }
+  renderEditor({});
+}
+function editQuery(id) {
+  const q = queries.find(x => x.id === id);
+  if (!q) return;
+  editingId = id;
+  renderEditor(q);
+}
+
+function renderEditor(q) {
+  $('drawerTitle').textContent = editingId ? '編輯查詢' : '新增查詢';
+  $('drawerBody').innerHTML = `
+    <div class="form-row" style="background: var(--surface-2); border: 1px dashed var(--border-strong); padding: 12px; border-radius: var(--radius);">
+      <label>🪄 貼既有 SQL 自動解析<span style="color:var(--text-subtle);font-weight:400;">（選用 — 一鍵填好下面欄位）</span></label>
+      <textarea id="edPaste" style="min-height: 110px; font-size: 12.5px;" placeholder="貼你現有的 SQL 進來 — 會自動把會員 IN (...) 條件換成 {FILTER}，並填入欄位名稱"></textarea>
+      <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
+        <button class="secondary" onclick="autoParseSql()" type="button">🪄 解析並填入</button>
+      </div>
+      <div class="help">偵測規則：找「欄位 IN (...)」條件，值含 <code>@</code> → 帳號欄位；值是大數字（≥10000）→ 編號欄位。event / status 之類的小數字條件會自動跳過。</div>
+    </div>
+    <div class="form-row">
+      <label>名稱</label>
+      <input type="text" id="edName" value="${esc(q.name || '')}" placeholder="例如：登入紀錄">
+    </div>
+    <div class="form-row">
+      <label>簡述（選填）</label>
+      <input type="text" id="edDesc" value="${esc(q.description || '')}" placeholder="一句話介紹這個查詢做什麼">
+    </div>
+    <div class="form-row">
+      <label>會員編號欄位 <span style="color:var(--text-subtle)">（純數字輸入時使用）</span></label>
+      <input type="text" id="edIdCol" value="${esc(q.idColumn || '')}" placeholder="L.accountId">
+      <div class="help">輸入為純數字時，<code>{FILTER}</code> 會套成「<code>此欄位 IN (123, 456)</code>」。留空則此查詢僅支援帳號輸入。</div>
+    </div>
+    <div class="form-row">
+      <label>會員帳號欄位 <span style="color:var(--text-subtle)">（含 @ 輸入時使用）</span></label>
+      <input type="text" id="edAccCol" value="${esc(q.accountColumn || '')}" placeholder="L.username">
+      <div class="help">輸入含 @ 時，<code>{FILTER}</code> 會套成「<code>此欄位 IN ('xx@AP', …)</code>」。留空則此查詢僅支援編號輸入。</div>
+    </div>
+    <div class="form-row">
+      <label>JOIN Key <span style="color:var(--text-subtle)">（選填 — 合併查詢用）</span></label>
+      <input type="text" id="edJoinKey" value="${esc(q.joinKey || '')}" placeholder="例如：會員編號 或 AccountId">
+      <div class="help">填上「SELECT 出來的欄位名」（含 alias，例如 <code>A.AccountId AS 會員編號</code> 就填 <code>會員編號</code>）。同時選到多個相同 JOIN Key 的查詢時，會自動合併成一段 CTE + LEFT JOIN。不需合併就留空。⚠ 一人多筆的查詢（如 login_log）合併會爆列，要留空。</div>
+    </div>
+    <div class="form-row">
+      <label>SQL（在條件處寫 <code>{FILTER}</code>）</label>
+      <textarea id="edSql" style="min-height:280px;font-size:12.5px">${esc(q.sql || '')}</textarea>
+      <div class="help"><code>{FILTER}</code> 是特殊佔位符，會被替換成對應的 IN 條件。可放多個。</div>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+      <button class="ghost" onclick="renderDrawerList()">取消</button>
+      <button onclick="saveQuery()">儲存</button>
+    </div>
+  `;
+}
+
+function extractSelectAliases(sql) {
+  // Find first SELECT ... FROM at depth 0
+  const selMatch = sql.match(/\bSELECT\b/i);
+  if (!selMatch) return [];
+  const start = selMatch.index + selMatch[0].length;
+  let depth = 0, inStr = false, fromIdx = -1;
+  for (let i = start; i < sql.length; i++) {
+    const c = sql[i];
+    if (inStr) { if (c === "'" && sql[i - 1] !== '\\') inStr = false; continue; }
+    if (c === "'") { inStr = true; continue; }
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    if (depth === 0 && /^\s+from\b/i.test(sql.substr(i, 6))) { fromIdx = i; break; }
+  }
+  if (fromIdx < 0) return [];
+
+  const cols = sql.substring(start, fromIdx);
+
+  // Split on commas at depth 0
+  const parts = []; let buf = ''; depth = 0; inStr = false;
+  for (const c of cols) {
+    if (inStr) { buf += c; if (c === "'") inStr = false; continue; }
+    if (c === "'") { inStr = true; buf += c; continue; }
+    if (c === '(') { depth++; buf += c; continue; }
+    if (c === ')') { depth--; buf += c; continue; }
+    if (c === ',' && depth === 0) { parts.push(buf.trim()); buf = ''; continue; }
+    buf += c;
+  }
+  if (buf.trim()) parts.push(buf.trim());
+
+  const aliases = [];
+  for (const part of parts) {
+    // Match trailing "AS alias" / "as alias", alias可以是 [...] / "..." / 裸字
+    const m = part.match(/\s+AS\s+(?:\[([^\]]+)\]|"([^"]+)"|(\S+?))\s*$/i);
+    if (m) {
+      aliases.push((m[1] || m[2] || m[3] || '').trim());
+    } else {
+      // 無 AS，取最後一個識別字（去掉資料表前綴）
+      const tail = part.split(/[\s.]/).filter(Boolean).pop();
+      if (tail && !/[()]/.test(tail)) aliases.push(tail.replace(/[\[\]"]/g, ''));
+    }
+  }
+  return aliases.filter(a => a && a.length < 40);
+}
+
+function autoParseSql() {
+  const raw = ($('edPaste').value || '').trim();
+  if (!raw) { toast('請先貼 SQL', 'warning'); return; }
+
+  // Find "column IN (...)" patterns. Column can be bare (Account), dotted (L.accountId),
+  // or bracketed ([col], [alias].[col]).
+  const re = /((?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s+IN\s*\(\s*([^)]+?)\s*\)/gi;
+
+  const memberMatches = [];
+  let m;
+  while ((m = re.exec(raw)) !== null) {
+    const col = m[1];
+    const valuesRaw = m[2];
+    const hasAt = /'[^']*@[^']*'/.test(valuesRaw);
+    const hasQuotes = /['"]/.test(valuesRaw);
+    const numbers = valuesRaw.match(/\d+/g) || [];
+    const hasLargeNum = numbers.some(n => parseInt(n, 10) >= 10000);
+
+    if (hasAt) {
+      memberMatches.push({ type: 'account', column: col, full: m[0] });
+    } else if (!hasQuotes && hasLargeNum) {
+      memberMatches.push({ type: 'member_id', column: col, full: m[0] });
+    }
+    // else: small-integer IN (event codes etc) — skip
+  }
+
+  if (!memberMatches.length) {
+    toast('找不到會員條件（含 @ 或 ≥10000 的 IN 子句）。請手動把會員條件改成 {FILTER}', 'warning', 4500);
+    return;
+  }
+
+  // Replace each match with {FILTER}
+  let newSql = raw;
+  let foundId = '', foundAcc = '';
+  const cleanCol = c => c.replace(/\[|\]/g, '');
+
+  for (const mm of memberMatches) {
+    newSql = newSql.split(mm.full).join('{FILTER}');
+    if (mm.type === 'account' && !foundAcc) foundAcc = mm.column;
+    if (mm.type === 'member_id' && !foundId) foundId = mm.column;
+  }
+
+  // Extract a suggested name from first real FROM table reference.
+  // Takes the LAST segment of a dotted reference — that's the table, not the DB/schema.
+  // e.g. FROM [db].[dbo].[login_log]   → login_log
+  //      FROM onlinebackup.[a].[b].[t] → t
+  //      FROM users AS u               → users
+  // Skips "FROM (" (subquery) — regex naturally moves on.
+  let nameSuggest = '';
+  const fromRe = /\bFROM\s+((?:\[[^\]]+\]|\w+)(?:\.(?:\[[^\]]+\]|\w+))*)/i;
+  const fromM = raw.match(fromRe);
+  if (fromM) {
+    const segs = fromM[1].split('.');
+    const last = segs[segs.length - 1];
+    nameSuggest = last.replace(/^\[|\]$/g, '');
+  }
+
+  // Fill fields — only override empties so we don't clobber user's existing input
+  $('edSql').value = newSql;
+  if (!$('edName').value.trim() && nameSuggest) $('edName').value = nameSuggest;
+  if (foundId && !$('edIdCol').value.trim()) $('edIdCol').value = foundId;
+  if (foundAcc && !$('edAccCol').value.trim()) $('edAccCol').value = foundAcc;
+
+  // Auto-fill description with output column aliases
+  if (!$('edDesc').value.trim()) {
+    const aliases = extractSelectAliases(raw);
+    if (aliases.length) {
+      $('edDesc').value = '欄位：' + aliases.join('、');
+    }
+  }
+
+  const summary = memberMatches
+    .map(x => `${x.column}（${x.type === 'account' ? '帳號' : '編號'}）`)
+    .join('、');
+  toast(`✨ 解析成功：${summary}`, 'success', 3500);
+  $('edPaste').value = '';
+}
+
+function saveQuery() {
+  const name = $('edName').value.trim();
+  const sql = $('edSql').value.trim();
+  const idCol = $('edIdCol').value.trim();
+  const accCol = $('edAccCol').value.trim();
+  if (!name) { toast('請輸入名稱', 'warning'); $('edName').focus(); return; }
+  if (!sql) { toast('請輸入 SQL', 'warning'); $('edSql').focus(); return; }
+  if (!idCol && !accCol) {
+    toast('請至少填寫一個欄位（編號或帳號）', 'warning'); return;
+  }
+  if (!sql.includes('{FILTER}')) {
+    if (!confirm('SQL 中沒有 {FILTER} 標記，這樣不會套入會員條件。確定儲存？')) return;
+  }
+  const data = {
+    id: editingId || ('q_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
+    name,
+    description: $('edDesc').value.trim(),
+    idColumn: idCol,
+    accountColumn: accCol,
+    joinKey: ($('edJoinKey') && $('edJoinKey').value || '').trim(),
+    sql
+  };
+  const wasNew = !editingId;
+  if (editingId) {
+    const i = queries.findIndex(q => q.id === editingId);
+    if (i >= 0) queries[i] = data;
+  } else {
+    queries.push(data);
+    if (!selectedIds.includes(data.id)) selectedIds.push(data.id);
+  }
+  saveQueries(); saveSelected();
+  closeDrawer();
+  if (isSheetMode()) {
+    copyRowToClipboard(data, wasNew);
+  } else if (syncSource === 'sheet') {
+    toast(`⚠ 尚未設定 Sheet URL — 「${name}」暫存於本機。請點右上徽章設定 URL`, 'warning', 6000);
+  } else {
+    toast(wasNew ? `✓ 已新增：${name}` : `✓ 已更新：${name}`, 'success');
+  }
+  editingId = null;
+  renderDrawerList();
+  renderQueryList();
+  updateActionBar();
+  updateStepStates();
+}
+
+function deleteQuery(id) {
+  const q = queries.find(x => x.id === id);
+  if (!q) return;
+  if (!confirm(`確定要刪除「${q.name}」？`)) return;
+  queries = queries.filter(x => x.id !== id);
+  selectedIds = selectedIds.filter(x => x !== id);
+  saveQueries(); saveSelected();
+  renderDrawerList();
+  renderQueryList();
+  updateActionBar();
+  updateStepStates();
+  toast('已刪除「' + q.name + '」', 'success');
+}
+
+function moveQuery(id, dir) {
+  const i = queries.findIndex(x => x.id === id);
+  const j = i + dir;
+  if (i < 0 || j < 0 || j >= queries.length) return;
+  [queries[i], queries[j]] = [queries[j], queries[i]];
+  saveQueries();
+  renderDrawerList();
+  renderQueryList();
+}
+
+function resetQueries() {
+  if (!confirm('還原為預設查詢？所有自訂的查詢會消失。')) return;
+  queries = JSON.parse(JSON.stringify(DEFAULT_QUERIES));
+  selectedIds = queries.map(q => q.id);
+  saveQueries(); saveSelected();
+  renderDrawerList();
+  renderQueryList();
+  updateActionBar();
+  updateStepStates();
+  toast('已還原預設', 'success');
+}
+
+function exportQueries() {
+  const blob = new Blob([JSON.stringify(queries, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `member-sql-queries-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+  toast('已匯出 ' + queries.length + ' 筆', 'success');
+}
+
+async function handleImport(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  try {
+    const txt = await file.text();
+    const data = JSON.parse(txt);
+    if (!Array.isArray(data)) throw new Error('格式錯誤：應為陣列');
+    for (const q of data) {
+      if (!q.id || !q.name || !q.sql) throw new Error('缺少 id / name / sql');
+    }
+    if (!confirm(`匯入 ${data.length} 筆查詢？這會取代目前的所有查詢。`)) return;
+    queries = data;
+    selectedIds = queries.map(q => q.id);
+    saveQueries(); saveSelected();
+    renderDrawerList();
+    renderQueryList();
+    updateActionBar();
+    updateStepStates();
+    toast(`已匯入 ${data.length} 筆`, 'success');
+  } catch (err) {
+    toast('匯入失敗：' + err.message, 'error');
+  } finally {
+    e.target.value = '';
+  }
+}
+
+/* ==================================================
+ * Generation
+ * ================================================== */
+function highlightSql(sql) {
+  const escaped = esc(sql);
+  // Order matters: comments, strings, keywords, numbers
+  return escaped
+    .replace(/('(?:[^'\\]|\\.)*')/g, '<span class="str">$1</span>')
+    .replace(/\b(SELECT|FROM|WHERE|AND|OR|AS|LEFT|RIGHT|INNER|OUTER|FULL|JOIN|ON|IN|NOT|NULL|CASE|WHEN|THEN|ELSE|END|CAST|ORDER|BY|ASC|DESC|GROUP|PARTITION|OVER|ROW_NUMBER|HAVING|DISTINCT|UNION|ALL|INSERT|UPDATE|DELETE|INTO|VALUES|SET)\b/gi, '<span class="kw">$1</span>')
+    .replace(/\b(\d+)\b/g, '<span class="num">$1</span>');
+}
+
+function generate() {
+  if (!inputCache.unique.length) {
+    toast('請先輸入清單或上傳檔案', 'warning');
+    $('inputArea').focus();
+    return;
+  }
+  if (!selectedIds.length) {
+    toast('請至少勾選一個查詢', 'warning');
+    return;
+  }
+
+  const unique = inputCache.unique;
+  const type = inputCache.type;
+  const typeLabel = type === 'member_id' ? '會員編號' : '會員帳號';
+
+  let usedItems, listStr;
+  if (type === 'member_id') {
+    usedItems = unique.filter(x => /^\d+$/.test(x));
+    listStr = usedItems.join(', ');
+  } else {
+    usedItems = unique;
+    listStr = usedItems.map(x => `'${x}'`).join(', ');
+  }
+  const dropped = unique.length - usedItems.length;
+
+  const selectedQueries = queries.filter(q => selectedIds.includes(q.id));
+  const blocks = [];
+  const skipped = [];
+
+  // Partition into join-groups (by joinKey) and ungrouped
+  const joinGroups = new Map(); // joinKey -> [query...]
+  const ungrouped = [];
+  for (const q of selectedQueries) {
+    const col = type === 'member_id' ? q.idColumn : q.accountColumn;
+    if (!col) { skipped.push(q.name); continue; }
+    const key = (q.joinKey || '').trim();
+    if (key) {
+      if (!joinGroups.has(key)) joinGroups.set(key, []);
+      joinGroups.get(key).push(q);
+    } else {
+      ungrouped.push(q);
+    }
+  }
+
+  const buildFilter = q => {
+    const col = type === 'member_id' ? q.idColumn : q.accountColumn;
+    return `${col} IN (${listStr})`;
+  };
+
+  const indentText = (t, n) => {
+    const pad = ' '.repeat(n);
+    return t.split('\n').map(l => pad + l).join('\n');
+  };
+
+  // Grouped queries → CTE + LEFT JOIN when >= 2 in group
+  for (const [key, group] of joinGroups.entries()) {
+    if (group.length === 1) {
+      const q = group[0];
+      const sql = q.sql.split('{FILTER}').join(buildFilter(q));
+      blocks.push({ q, sql });
+      continue;
+    }
+    // Build merged CTE query
+    const ctes = group.map((q, i) => {
+      let inner = q.sql.split('{FILTER}').join(buildFilter(q));
+      inner = inner.replace(/;\s*$/, '');
+      return `_q${i} AS (\n${indentText(inner, 2)}\n)`;
+    });
+    const mainCols = group.map((_, i) => `_q${i}.*`).join(', ');
+    const joins = group.slice(1).map((_, i) =>
+      `LEFT JOIN _q${i + 1} ON _q0.[${key}] = _q${i + 1}.[${key}]`
+    );
+    const merged =
+      `WITH ${ctes.join(',\n')}\n` +
+      `SELECT ${mainCols}\n` +
+      `FROM _q0\n` +
+      `${joins.join('\n')};`;
+    const mergedQ = {
+      id: 'merged_' + key,
+      name: group.map(q => q.name).join(' + '),
+      description: `合併 ${group.length} 個查詢（共同 key：${key}）`
+    };
+    blocks.push({ q: mergedQ, sql: merged, merged: true });
+  }
+
+  // Ungrouped queries → one block each
+  for (const q of ungrouped) {
+    const sql = q.sql.split('{FILTER}').join(buildFilter(q));
+    blocks.push({ q, sql });
+  }
+
+  const pillClass = type === 'account' ? 'type-pill account' : 'type-pill';
+  const metaHtml = `
+    <div class="output-meta">
+      <span><span class="${pillClass}">${typeLabel}</span></span>
+      <span><span class="label">總筆數</span><b>${inputCache.items.length}</b></span>
+      <span><span class="label">去重後</span><b>${unique.length}</b></span>
+      ${dropped ? `<span style="color:var(--warning)"><span class="label">忽略非數字</span><b>${dropped}</b></span>` : ''}
+      <span style="color:var(--text-subtle);margin-left:auto"><span class="label">來源</span>${esc(inputCache.source)}</span>
+    </div>
+  `;
+
+  const warnHtml = skipped.length ? `
+    <div class="warn-inline">⚠ 因輸入類型不符，略過 ${skipped.length} 個查詢：${esc(skipped.join('、'))}</div>
+  ` : '';
+
+  const blocksHtml = blocks.map((b, i) => `
+    <div class="sql-card">
+      <div class="sql-card-header">
+        <div>
+          <div class="title">${esc(b.q.name)}</div>
+          ${b.q.description ? `<div class="desc">${esc(b.q.description)}</div>` : ''}
+        </div>
+        <div class="spacer"></div>
+        <button class="secondary copy-btn" data-copy="sql_${i}">📋 複製</button>
+      </div>
+      <pre id="sql_${i}" data-raw="${esc(b.sql)}">${highlightSql(b.sql)}</pre>
+    </div>
+  `).join('');
+
+  $('output').innerHTML = metaHtml + warnHtml + (blocks.length
+    ? blocksHtml
+    : `<div class="step-body"><div class="empty-state"><div class="icon">⚠</div><div>勾選的查詢都不支援當前輸入類型</div></div></div>`);
+
+  // Wire copy buttons
+  $('output').querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.dataset.copy);
+      const text = target.dataset.raw;
+      try {
+        await navigator.clipboard.writeText(text);
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✓ 已複製';
+        setTimeout(() => { btn.innerHTML = orig; }, 1400);
+        toast('已複製到剪貼簿', 'success', 1600);
+      } catch {
+        toast('複製失敗，請手動選取', 'error');
+      }
+    });
+  });
+
+  // Scroll to output
+  setTimeout(() => {
+    $('step3').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, 50);
+}
+
+/* ==================================================
+ * File handling + drag-drop
+ * ================================================== */
+const dropzone = $('dropzone');
+
+function setFile(file) {
+  currentFile = file;
+  if (file) {
+    $('fileName').textContent = file.name;
+    dropzone.classList.add('has-file');
+    $('inputArea').disabled = true;
+    $('inputArea').style.opacity = '0.4';
+  } else {
+    $('fileName').textContent = '';
+    dropzone.classList.remove('has-file');
+    $('inputArea').disabled = false;
+    $('inputArea').style.opacity = '1';
+    $('fileInput').value = '';
+  }
+  updateInputCache();
+}
+
+$('fileInput').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (file) setFile(file);
+});
+$('removeFileBtn').addEventListener('click', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  setFile(null);
+});
+
+['dragenter', 'dragover'].forEach(evt => {
+  dropzone.addEventListener(evt, e => {
+    e.preventDefault();
+    dropzone.classList.add('drag-over');
+  });
+});
+['dragleave', 'drop'].forEach(evt => {
+  dropzone.addEventListener(evt, e => {
+    e.preventDefault();
+    if (evt === 'dragleave' && e.target !== dropzone) return;
+    dropzone.classList.remove('drag-over');
+  });
+});
+dropzone.addEventListener('drop', e => {
+  const file = e.dataTransfer.files[0];
+  if (file) setFile(file);
+});
+
+$('inputArea').addEventListener('input', updateInputCache);
+$('genBtn').addEventListener('click', generate);
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && $('drawer').classList.contains('open')) {
+    closeDrawer();
+    return;
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault();
+    generate();
+  }
+});
+
+/* ==================================================
+ * Init (async — may fetch Google Sheet)
+ * ================================================== */
+async function initApp() {
+  if (isSheetMode()) {
+    renderQueryList(); // show placeholder while loading
+    try {
+      queries = await fetchFromSheet(sheetUrl);
+      lastSyncStatus = { ok: true, message: `同步 ${queries.length} 筆`, count: queries.length, at: new Date() };
+      toast(`✓ 從 Google Sheet 同步 ${queries.length} 筆`, 'success');
+    } catch (err) {
+      queries = loadQueries();
+      lastSyncStatus = { ok: false, message: err.message, count: 0, at: new Date() };
+      toast(`⚠ Sheet 同步失敗：${err.message}。暫用本機備份。`, 'error', 5500);
+    }
+  } else {
+    queries = loadQueries();
+  }
+  const stored = loadSelected();
+  const validIds = new Set(queries.map(q => q.id));
+  selectedIds = stored.filter(id => validIds.has(id));
+  if (!selectedIds.length) selectedIds = queries.map(q => q.id);
+
+  renderQueryList();
+  updateActionBar();
+  updateStepStates();
+}
+
+initApp();
+</script>
+</body>
+</html>
