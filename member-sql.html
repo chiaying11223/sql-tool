@@ -625,6 +625,55 @@
   }
   .action-summary b { color: var(--text); font-weight: 600; }
 
+  /* ========== Modal (sync settings) ========== */
+  .modal {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    animation: fadeIn 0.15s ease;
+  }
+  .modal[hidden] { display: none; }
+  .modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .modal-panel {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    width: min(640px, 92vw);
+    max-height: 85vh;
+    overflow: hidden;
+    box-shadow: var(--shadow-lg);
+    display: flex;
+    flex-direction: column;
+  }
+  .modal-header {
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .modal-header h2 {
+    margin: 0; font-size: 15px; font-weight: 600; flex: 1;
+  }
+  .modal-body {
+    padding: 18px 20px;
+    overflow-y: auto;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
   /* ========== Drawer ========== */
   .drawer {
     position: fixed;
@@ -786,8 +835,7 @@
     </div>
   </div>
   <div style="display:flex; gap:10px; align-items:center;">
-    <span id="modeBadge" class="mode-badge" onclick="openDrawer()" title="點我切換儲存位置"></span>
-    <div class="shortcut-hint"><span><kbd>Ctrl</kbd>+<kbd>Enter</kbd></span></div>
+    <span id="modeBadge" class="mode-badge" onclick="openSyncModal()" title="點我設定儲存位置"></span>
   </div>
 </div>
 
@@ -867,15 +915,6 @@
   </div><!-- /tabGenerate -->
 
   <div class="tab-pane" id="tabManage" hidden>
-    <!-- 儲存位置 -->
-    <section class="step">
-      <div class="step-header">
-        <span class="step-num">🔗</span>
-        <span class="step-title">儲存位置</span>
-      </div>
-      <div class="step-body" id="manageSyncArea"></div>
-    </section>
-
     <!-- 查詢列表 -->
     <section class="step" id="manageListSection">
       <div class="step-header">
@@ -901,7 +940,7 @@
 </main>
 
 <!-- Sticky action bar -->
-<div class="action-bar">
+<div class="action-bar" id="actionBar">
   <div class="action-bar-inner">
     <div class="action-summary" id="actionSummary">尚未輸入</div>
     <button class="primary-lg" id="genBtn">產生 SQL ➜</button>
@@ -921,6 +960,18 @@
     </div>
   </div>
 </aside>
+
+<!-- Sync Settings Modal -->
+<div class="modal" id="syncModal" hidden>
+  <div class="modal-backdrop" onclick="closeSyncModal()"></div>
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h2>🔗 儲存位置設定</h2>
+      <button class="icon-btn" onclick="closeSyncModal()">✕</button>
+    </div>
+    <div class="modal-body" id="syncModalBody"></div>
+  </div>
+</div>
 
 <!-- Toasts -->
 <div class="toasts" id="toasts"></div>
@@ -1285,15 +1336,9 @@ function renderQueryList() {
     if (type === 'member_id' && !hasId) disabled = true;
     if (type === 'account' && !hasAcc) disabled = true;
 
-    const badges = [];
-    if (hasId) badges.push(`<span class="q-badge id">編號 → ${esc(q.idColumn)}</span>`);
-    if (hasAcc) badges.push(`<span class="q-badge acc">帳號 → ${esc(q.accountColumn)}</span>`);
-    if (!hasId && !hasAcc) badges.push(`<span class="q-badge incompat">未設定欄位</span>`);
-    if (disabled) badges.push(`<span class="q-badge incompat">✗ 當前輸入不支援</span>`);
-
     return `
       <div class="q-card ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}"
-           data-id="${esc(q.id)}" data-disabled="${disabled}">
+           data-id="${esc(q.id)}" data-disabled="${disabled}" title="${disabled ? '此查詢不支援當前輸入類型' : ''}">
         <div class="q-card-checkbox">
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M3 8l3.5 3.5L13 4"/>
@@ -1301,7 +1346,6 @@ function renderQueryList() {
         </div>
         <div class="q-card-name">${esc(q.name)}</div>
         ${q.description ? `<div class="q-card-desc">${esc(q.description)}</div>` : ''}
-        <div class="q-badges">${badges.join('')}</div>
       </div>
     `;
   }).join('');
@@ -1397,7 +1441,10 @@ function switchTab(name) {
   $('tabManage').hidden = name !== 'manage';
   $('tabBtnGenerate').classList.toggle('active', name === 'generate');
   $('tabBtnManage').classList.toggle('active', name === 'manage');
-  // 切換時隱藏編輯器
+  // 動作列只在產生頁籤顯示
+  const bar = $('actionBar');
+  if (bar) bar.style.display = name === 'generate' ? '' : 'none';
+  document.body.style.paddingBottom = name === 'generate' ? '96px' : '24px';
   if (name === 'manage') {
     renderManageTab();
   } else {
@@ -1406,15 +1453,24 @@ function switchTab(name) {
 }
 
 function renderManageTab() {
-  renderManageSync();
   renderManageList();
   updateModeBadge();
   const c = $('manageCount');
   if (c) c.textContent = queries.length;
 }
 
+function openSyncModal() {
+  $('syncModalBody').innerHTML = renderSyncPanel();
+  $('syncModal').hidden = false;
+}
+function closeSyncModal() {
+  $('syncModal').hidden = true;
+}
 function renderManageSync() {
-  $('manageSyncArea').innerHTML = renderSyncPanel();
+  // 已搬到 Modal，若 Modal 開著就重新渲染
+  if (!$('syncModal').hidden) {
+    $('syncModalBody').innerHTML = renderSyncPanel();
+  }
 }
 
 function renderManageList() {
@@ -2175,13 +2231,9 @@ $('inputArea').addEventListener('input', updateInputCache);
 $('genBtn').addEventListener('click', generate);
 
 document.addEventListener('keydown', e => {
-  if (e.key === 'Escape' && $('drawer').classList.contains('open')) {
-    closeDrawer();
-    return;
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-    e.preventDefault();
-    generate();
+  if (e.key === 'Escape') {
+    if (!$('syncModal').hidden) closeSyncModal();
+    else if ($('drawer').classList.contains('open')) closeDrawer();
   }
 });
 
