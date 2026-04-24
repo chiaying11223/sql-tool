@@ -1493,7 +1493,7 @@ function renderManageList() {
   box.innerHTML = queries.map((q, i) => `
     <div class="m-item" data-id="${esc(q.id)}">
       <div class="info">
-        <div class="name">${esc(q.name)}${q.joinKey ? ` <span style="font-size:11px; color:var(--accent); font-weight:400;">🔗${esc(q.joinKey)}</span>` : ''}</div>
+        <div class="name">${esc(q.name)}</div>
         <div class="desc">${esc(q.description || '（無描述）')}</div>
       </div>
       <button class="icon-btn" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
@@ -1745,11 +1745,6 @@ function renderEditor(q) {
       <label>會員帳號欄位 <span style="color:var(--text-subtle)">（含 @ 輸入時使用）</span></label>
       <input type="text" id="edAccCol" value="${esc(q.accountColumn || '')}" placeholder="L.username">
       <div class="help">輸入含 @ 時，<code>{FILTER}</code> 會套成「<code>此欄位 IN ('xx@AP', …)</code>」。留空則此查詢僅支援編號輸入。</div>
-    </div>
-    <div class="form-row">
-      <label>JOIN Key <span style="color:var(--text-subtle)">（選填 — 合併查詢用）</span></label>
-      <input type="text" id="edJoinKey" value="${esc(q.joinKey || '')}" placeholder="例如：會員編號 或 AccountId">
-      <div class="help">填上「SELECT 出來的欄位名」（含 alias，例如 <code>A.AccountId AS 會員編號</code> 就填 <code>會員編號</code>）。同時選到多個相同 JOIN Key 的查詢時，會自動合併成一段 CTE + LEFT JOIN。不需合併就留空。⚠ 一人多筆的查詢（如 login_log）合併會爆列，要留空。</div>
     </div>
     <div class="form-row">
       <label>SQL（在條件處寫 <code>{FILTER}</code>）</label>
@@ -2065,65 +2060,11 @@ function generate() {
   const blocks = [];
   const skipped = [];
 
-  // Partition into join-groups (by joinKey) and ungrouped
-  const joinGroups = new Map(); // joinKey -> [query...]
-  const ungrouped = [];
   for (const q of selectedQueries) {
     const col = type === 'member_id' ? q.idColumn : q.accountColumn;
     if (!col) { skipped.push(q.name); continue; }
-    const key = (q.joinKey || '').trim();
-    if (key) {
-      if (!joinGroups.has(key)) joinGroups.set(key, []);
-      joinGroups.get(key).push(q);
-    } else {
-      ungrouped.push(q);
-    }
-  }
-
-  const buildFilter = q => {
-    const col = type === 'member_id' ? q.idColumn : q.accountColumn;
-    return `${col} IN (${listStr})`;
-  };
-
-  const indentText = (t, n) => {
-    const pad = ' '.repeat(n);
-    return t.split('\n').map(l => pad + l).join('\n');
-  };
-
-  // Grouped queries → CTE + LEFT JOIN when >= 2 in group
-  for (const [key, group] of joinGroups.entries()) {
-    if (group.length === 1) {
-      const q = group[0];
-      const sql = q.sql.split('{FILTER}').join(buildFilter(q));
-      blocks.push({ q, sql });
-      continue;
-    }
-    // Build merged CTE query
-    const ctes = group.map((q, i) => {
-      let inner = q.sql.split('{FILTER}').join(buildFilter(q));
-      inner = inner.replace(/;\s*$/, '');
-      return `_q${i} AS (\n${indentText(inner, 2)}\n)`;
-    });
-    const mainCols = group.map((_, i) => `_q${i}.*`).join(', ');
-    const joins = group.slice(1).map((_, i) =>
-      `LEFT JOIN _q${i + 1} ON _q0.[${key}] = _q${i + 1}.[${key}]`
-    );
-    const merged =
-      `WITH ${ctes.join(',\n')}\n` +
-      `SELECT ${mainCols}\n` +
-      `FROM _q0\n` +
-      `${joins.join('\n')};`;
-    const mergedQ = {
-      id: 'merged_' + key,
-      name: group.map(q => q.name).join(' + '),
-      description: `合併 ${group.length} 個查詢（共同 key：${key}）`
-    };
-    blocks.push({ q: mergedQ, sql: merged, merged: true });
-  }
-
-  // Ungrouped queries → one block each
-  for (const q of ungrouped) {
-    const sql = q.sql.split('{FILTER}').join(buildFilter(q));
+    const filter = `${col} IN (${listStr})`;
+    const sql = q.sql.split('{FILTER}').join(filter);
     blocks.push({ q, sql });
   }
 
