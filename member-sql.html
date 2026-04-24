@@ -1336,6 +1336,11 @@ function renderQueryList() {
     if (type === 'member_id' && !hasId) disabled = true;
     if (type === 'account' && !hasAcc) disabled = true;
 
+    const badges = [];
+    if (hasId) badges.push(`<span class="q-badge id">會員編號</span>`);
+    if (hasAcc) badges.push(`<span class="q-badge acc">會員帳號</span>`);
+    if (!hasId && !hasAcc) badges.push(`<span class="q-badge incompat">未設定</span>`);
+
     return `
       <div class="q-card ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}"
            data-id="${esc(q.id)}" data-disabled="${disabled}" title="${disabled ? '此查詢不支援當前輸入類型' : ''}">
@@ -1346,6 +1351,7 @@ function renderQueryList() {
         </div>
         <div class="q-card-name">${esc(q.name)}</div>
         ${q.description ? `<div class="q-card-desc">${esc(q.description)}</div>` : ''}
+        <div class="q-badges">${badges.join('')}</div>
       </div>
     `;
   }).join('');
