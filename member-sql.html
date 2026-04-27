@@ -1639,8 +1639,8 @@ function promptForParams(paramSpecs, opts = {}) {
 
     html += specs.map(({ name, optional }) => `
       <div class="form-row">
-        <label>${esc(name)}${optional ? ' <span style="color:var(--text-subtle); font-weight:400;">（選填，留空會省略對應段落）</span>' : ''}</label>
-        <input type="text" data-param="${esc(name)}" value="${esc(history[name] || '')}" placeholder="${optional ? '留空略過' : '輸入 ' + esc(name) + ' 的值，例如 2026-04-27 12:00'}">
+        <label>${esc(name)}${optional ? ' <span style="color:var(--text-subtle); font-weight:400;">（選填，留空會省略對應段落）</span>' : ' <span style="color:var(--accent); font-weight:400;">（必填）</span>'}</label>
+        <input type="text" data-param="${esc(name)}" data-optional="${optional ? '1' : '0'}" value="${esc(history[name] || '')}" placeholder="${optional ? '留空略過' : '輸入 ' + esc(name) + ' 的值，例如 2026-04-27 12:00'}">
       </div>
     `).join('');
 
@@ -1657,11 +1657,38 @@ function promptForParams(paramSpecs, opts = {}) {
 
 function confirmParams() {
   const inputs = $('paramFormBody').querySelectorAll('input[data-param]');
+  // 檢查必填參數是否都有填
+  const missing = [];
+  for (const inp of inputs) {
+    const isOpt = inp.dataset.optional === '1';
+    if (!isOpt && !inp.value.trim()) {
+      missing.push(inp.dataset.param);
+      inp.style.borderColor = 'var(--danger)';
+      inp.style.boxShadow = '0 0 0 3px rgba(248,113,113,0.15)';
+    } else {
+      inp.style.borderColor = '';
+      inp.style.boxShadow = '';
+    }
+  }
+  // 名單也檢查
+  const membersEl = $('paramMembers');
+  if (membersEl && !membersEl.value.trim()) {
+    missing.push('要查詢的會員');
+    membersEl.style.borderColor = 'var(--danger)';
+    membersEl.style.boxShadow = '0 0 0 3px rgba(248,113,113,0.15)';
+  } else if (membersEl) {
+    membersEl.style.borderColor = '';
+    membersEl.style.boxShadow = '';
+  }
+  if (missing.length) {
+    toast(`必填欄位未填：${missing.join('、')}`, 'warning', 4500);
+    return;
+  }
+
   const values = {};
   for (const inp of inputs) values[inp.dataset.param] = inp.value;
   saveParamHistory(values);
 
-  const membersEl = $('paramMembers');
   const result = membersEl ? { __members__: membersEl.value, ...values } : values;
 
   $('paramModal').hidden = true;
@@ -2171,14 +2198,17 @@ async function autoParseSql() {
   while ((m = reEq.exec(raw)) !== null) {
     const col = m[1];
     const valueRaw = m[2];
-    const hasAt = /'[^']*@[^']*'/.test(valueRaw);
-    const isNum = /^\d+$/.test(valueRaw);
-    const numVal = isNum ? parseInt(valueRaw, 10) : 0;
-    if (hasAt) {
+    const isQuoted = /^'.*'$/.test(valueRaw);
+    const inner = isQuoted ? valueRaw.slice(1, -1) : valueRaw;
+
+    if (inner.includes('@')) {
+      // 含 @ → 帳號
       memberMatches.push({ type: 'account', column: col, full: m[0], op: 'eq' });
-    } else if (isNum && numVal >= 10000) {
+    } else if (/^\d{5,}$/.test(inner)) {
+      // 純數字 5 碼以上（不論有沒有引號）→ 會員編號
       memberMatches.push({ type: 'member_id', column: col, full: m[0], op: 'eq' });
     }
+    // 其他（短數字、enum 字串）跳過
   }
 
   // 名單和日期都沒偵測到才提示
