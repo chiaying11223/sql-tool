@@ -1064,7 +1064,7 @@ function loadSelected() {
     const raw = localStorage.getItem(SELECT_KEY);
     if (raw) return JSON.parse(raw);
   } catch {}
-  return queries.map(q => q.id);
+  return []; // 預設不選任何查詢，要用什麼勾什麼
 }
 function saveSelected() { localStorage.setItem(SELECT_KEY, JSON.stringify(selectedIds)); }
 
@@ -1561,22 +1561,35 @@ function saveParamHistory(values) {
   localStorage.setItem(PARAM_HISTORY_KEY, JSON.stringify(merged));
 }
 
-function promptForParams(paramNames) {
+function promptForParams(paramNames, opts = {}) {
   return new Promise(resolve => {
     paramResolve = resolve;
     const history = loadParamHistory();
-    const html = paramNames.map(name => `
+    let html = '';
+
+    // 名單查詢但 Step 1 沒輸入 → 在 modal 中問
+    if (opts.needsMembers) {
+      html += `
+        <div class="form-row">
+          <label>📋 要查詢的會員 <span style="color:var(--accent);">（必填，編號或帳號都可）</span></label>
+          <textarea id="paramMembers" style="min-height:70px;" placeholder="輸入會員編號或帳號，多個以逗號或換行分隔，例如：&#10;52758876&#10;52758898&#10;或：52758876@AP, 52758898@AP"></textarea>
+        </div>
+      `;
+    }
+
+    html += paramNames.map(name => `
       <div class="form-row">
         <label>${esc(name)}</label>
         <input type="text" data-param="${esc(name)}" value="${esc(history[name] || '')}" placeholder="輸入 ${esc(name)} 的值，例如 2026-04-27 12:00">
       </div>
     `).join('');
+
     $('paramFormBody').innerHTML = html + `
       <div class="help" style="margin-top:4px;">💡 上次填的值會自動帶入。值不需要加引號（SQL 裡的引號保留）。</div>
     `;
     $('paramModal').hidden = false;
     setTimeout(() => {
-      const first = $('paramFormBody').querySelector('input');
+      const first = $('paramFormBody').querySelector('textarea, input');
       if (first) first.focus();
     }, 50);
   });
@@ -1587,8 +1600,12 @@ function confirmParams() {
   const values = {};
   for (const inp of inputs) values[inp.dataset.param] = inp.value;
   saveParamHistory(values);
+
+  const membersEl = $('paramMembers');
+  const result = membersEl ? { __members__: membersEl.value, ...values } : values;
+
   $('paramModal').hidden = true;
-  if (paramResolve) { paramResolve(values); paramResolve = null; }
+  if (paramResolve) { paramResolve(result); paramResolve = null; }
 }
 
 function cancelParams() {
@@ -1736,7 +1753,7 @@ function switchSource(s) {
     lastSyncStatus = null;
     const validIds = new Set(queries.map(q => q.id));
     selectedIds = loadSelected().filter(id => validIds.has(id));
-    if (!selectedIds.length) selectedIds = queries.map(q => q.id);
+    // 預設不選任何查詢；使用者手動勾選
     toast('已切換至本機儲存', 'success');
     renderManageTab();
     renderQueryList();
@@ -1784,7 +1801,7 @@ async function applySheetUrl() {
     localStorage.setItem(SHEET_URL_KEY, url);
     queries = fromSheet;
     lastSyncStatus = { ok: true, message: `同步 ${queries.length} 筆`, count: queries.length };
-    selectedIds = queries.map(q => q.id);
+    selectedIds = [];
     saveSelected();
     toast(`✓ 載入 ${queries.length} 筆查詢`, 'success');
     renderManageTab();
@@ -1806,7 +1823,7 @@ async function syncNow() {
     lastSyncStatus = { ok: true, message: `同步 ${queries.length} 筆`, count: queries.length };
     const validIds = new Set(queries.map(q => q.id));
     selectedIds = loadSelected().filter(id => validIds.has(id));
-    if (!selectedIds.length) selectedIds = queries.map(q => q.id);
+    // 預設不選任何查詢；使用者手動勾選
     toast(`✓ 已同步 ${queries.length} 筆`, 'success');
     renderManageTab();
     renderQueryList();
@@ -2172,7 +2189,7 @@ async function moveQuery(id, dir) {
 function resetQueries() {
   if (!confirm('還原為預設查詢？所有自訂的查詢會消失。')) return;
   queries = JSON.parse(JSON.stringify(DEFAULT_QUERIES));
-  selectedIds = queries.map(q => q.id);
+  selectedIds = [];
   saveQueries(); saveSelected();
   renderManageTab();
   renderQueryList();
@@ -2204,7 +2221,7 @@ async function handleImport(e) {
     }
     if (!confirm(`匯入 ${data.length} 筆查詢？這會取代目前的所有查詢。`)) return;
     queries = data;
-    selectedIds = queries.map(q => q.id);
+    selectedIds = [];
     saveQueries(); saveSelected();
     renderManageTab();
     renderQueryList();
@@ -2237,34 +2254,50 @@ async function generate() {
   }
   const selectedQs = queries.filter(q => selectedIds.includes(q.id));
   const hasNonStatic = selectedQs.some(q => !isStaticQuery(q));
-  // 只勾常用語法 → 不需要清單；有勾名單查詢 → 需要清單
-  if (hasNonStatic && !inputCache.unique.length) {
-    toast('名單查詢需要先貼清單或上傳檔案', 'warning');
-    $('inputArea').focus();
-    return;
-  }
+  const needsMembers = hasNonStatic && !inputCache.unique.length;
 
   // 收集所有選到的查詢中的參數
   const allParams = new Set();
   for (const q of selectedQs) {
     for (const p of extractParams(q.sql)) allParams.add(p);
   }
+
   let paramValues = {};
-  if (allParams.size) {
-    const result = await promptForParams(Array.from(allParams));
+  let inlineMembers = null;
+  if (needsMembers || allParams.size) {
+    const result = await promptForParams(Array.from(allParams), { needsMembers });
     if (result === null) return; // 使用者取消
+    if (needsMembers) {
+      inlineMembers = (result.__members__ || '').trim();
+      delete result.__members__;
+      if (!inlineMembers) {
+        toast('需要輸入要查詢的會員', 'warning');
+        return;
+      }
+    }
     paramValues = result;
   }
 
-  const unique = inputCache.unique;
-  const type = inputCache.type;
+  // 如果是即時輸入 inlineMembers 就重算；否則用 inputCache
+  let unique, type, items, source;
+  if (inlineMembers) {
+    items = parseText(inlineMembers);
+    unique = dedupe(items);
+    type = unique.length ? detectType(unique) : null;
+    source = '即時輸入';
+  } else {
+    unique = inputCache.unique;
+    type = inputCache.type;
+    items = inputCache.items;
+    source = inputCache.source;
+  }
   const typeLabel = type === 'member_id' ? '會員編號' : '會員帳號';
 
-  let usedItems, listStr;
+  let usedItems = [], listStr = '';
   if (type === 'member_id') {
     usedItems = unique.filter(x => /^\d+$/.test(x));
     listStr = usedItems.join(', ');
-  } else {
+  } else if (type === 'account') {
     usedItems = unique;
     listStr = usedItems.map(x => `'${x}'`).join(', ');
   }
@@ -2309,10 +2342,10 @@ async function generate() {
   const metaHtml = unique.length ? `
     <div class="output-meta">
       <span><span class="${pillClass}">${typeLabel}</span></span>
-      <span><span class="label">總筆數</span><b>${inputCache.items.length}</b></span>
+      <span><span class="label">總筆數</span><b>${items.length}</b></span>
       <span><span class="label">去重後</span><b>${unique.length}</b></span>
       ${dropped ? `<span style="color:var(--warning)"><span class="label">忽略非數字</span><b>${dropped}</b></span>` : ''}
-      <span style="color:var(--text-subtle);margin-left:auto"><span class="label">來源</span>${esc(inputCache.source)}</span>
+      <span style="color:var(--text-subtle);margin-left:auto"><span class="label">來源</span>${esc(source || '')}</span>
     </div>
   ` : `
     <div class="output-meta">
@@ -2448,7 +2481,7 @@ async function initApp() {
   const stored = loadSelected();
   const validIds = new Set(queries.map(q => q.id));
   selectedIds = stored.filter(id => validIds.has(id));
-  if (!selectedIds.length) selectedIds = queries.map(q => q.id);
+  // 預設不選任何查詢；使用者手動勾選
 
   renderQueryList();
   updateActionBar();
