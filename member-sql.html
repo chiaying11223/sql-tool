@@ -399,6 +399,17 @@
         <label>SQL <span style="color:var(--text-subtle); font-weight:400;">— 直接修改裡面的值（日期、ID、欄位都可以），按下方「複製」拿到剪貼簿</span></label>
         <textarea id="editSql" placeholder="貼整段 SQL，可以含硬寫的值..." spellcheck="false"></textarea>
       </div>
+
+      <details style="margin-top:6px; padding:12px; background:var(--surface-2); border-radius:6px; border:1px solid var(--border);">
+        <summary style="font-size:13px; color:var(--accent);">📋 一鍵套入會員名單（要把 ID/帳號換成一批時用）</summary>
+        <div style="margin-top:10px;">
+          <textarea id="memberListBox" placeholder="貼會員編號或帳號，多個以逗號或換行分隔，例如：&#10;52758876&#10;52758898&#10;或：52758876@AP, 52758898@AP" style="width:100%; min-height:80px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:var(--font-mono); font-size:12.5px; resize:vertical;"></textarea>
+          <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+            <button class="secondary" type="button" onclick="applyMemberList()">⚡ 套入到上面的 SQL</button>
+            <span style="font-size:11px; color:var(--text-subtle);">會自動把 SQL 裡 <code>欄位 = 'X'</code> 或 <code>欄位 IN (...)</code> 的會員條件換成你的清單，<b>按完還可以複製</b></span>
+          </div>
+        </div>
+      </details>
     </div>
     <div class="modal-footer">
       <button class="danger" id="editDelBtn" onclick="deleteFromEdit()">🗑 刪除</button>
@@ -711,6 +722,59 @@ function openEdit(id) {
 function closeEdit() {
   $('editModal').hidden = true;
   editingId = null;
+}
+
+function applyMemberList() {
+  const raw = ($('memberListBox').value || '').trim();
+  if (!raw) { toast('請先貼會員清單', 'warning'); return; }
+
+  // 解析名單 token
+  const items = raw.split(/[,;\s\n\r\t]+/)
+    .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+    .filter(Boolean);
+  if (!items.length) { toast('沒有有效的 ID 或帳號', 'warning'); return; }
+
+  // 偵測格式：含 @ 或非純數字 → 加引號；純數字 → 不加引號
+  const hasAt = items.some(x => x.includes('@'));
+  const allNumeric = items.every(x => /^\d+$/.test(x));
+  const listStr = (hasAt || !allNumeric)
+    ? items.map(x => `'${x}'`).join(', ')
+    : items.join(', ');
+
+  // 判斷哪些值「看起來像會員」（避免把 event IN (1,4,13) 這類也替換掉）
+  const looksLikeMember = (v) => {
+    const s = String(v).trim().replace(/^['"]|['"]$/g, '');
+    return s.includes('@') || /^\d{5,}$/.test(s);
+  };
+  const allLookLikeMember = (csvStr) => {
+    const parts = csvStr.split(',').map(s => s.trim()).filter(Boolean);
+    return parts.length > 0 && parts.every(looksLikeMember);
+  };
+
+  let sql = $('editSql').value;
+  let replaced = 0;
+
+  // Pattern 1：column IN (...) — 只在值看起來都是會員時替換
+  sql = sql.replace(/(\b(?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s+IN\s*\(([^)]*)\)/gi, (full, col, values) => {
+    if (allLookLikeMember(values)) { replaced++; return `${col} IN (${listStr})`; }
+    return full;
+  });
+
+  // Pattern 2：column = 'value' / column = number — 只在值像會員時替換
+  sql = sql.replace(/(\b(?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s*=\s*('[^']*'|\d+)/gi, (full, col, val) => {
+    if (looksLikeMember(val)) { replaced++; return `${col} IN (${listStr})`; }
+    return full;
+  });
+
+  if (replaced === 0) {
+    toast('找不到會員條件可替換（值要 5 碼以上數字或含 @）。可手動編輯 SQL 後再試', 'warning', 5000);
+    return;
+  }
+
+  $('editSql').value = sql;
+  toast(`✓ 已套入 ${items.length} 筆會員，替換 ${replaced} 處條件`, 'success');
+  // 套完滾動到 SQL 框，方便看結果
+  $('editSql').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 async function copyEditSql() {
