@@ -1857,7 +1857,15 @@ function renderEditor(q) {
       <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
         <button class="secondary" onclick="autoParseSql()" type="button">🪄 解析並填入</button>
       </div>
-      <div class="help">偵測規則：找「欄位 IN (...)」條件，值含 <code>@</code> → 帳號欄位；值是大數字（≥10000）→ 編號欄位。event / status 之類的小數字條件會自動跳過。</div>
+      <div class="help">
+        <b>自動偵測規則</b>：
+        <ul style="margin:4px 0 0; padding-left:18px; line-height:1.7;">
+          <li><b>名單（簡單）</b>：單欄 <code>column IN (...)</code> 含 <code>@</code> 或大數字 → 轉成 <code>{FILTER}</code></li>
+          <li><b>名單（彈性）</b>：<code>column = '值'</code> 或多欄（如 <code>Sender = X OR Receiver = Y</code>）→ 轉成 <code>column IN ({LIST})</code></li>
+          <li><b>日期參數</b>：<code>'YYYY-MM-DD HH:MM'</code> → 自動轉成 <code>{startTime}</code> / <code>{endTime}</code></li>
+          <li><b>跳過</b>：event / status 等小數字（&lt;10000）的 IN/= 條件不動</li>
+        </ul>
+      </div>
     </div>
     <div class="form-row">
       <label>名稱</label>
@@ -1870,17 +1878,25 @@ function renderEditor(q) {
     <div class="form-row">
       <label>會員編號欄位 <span style="color:var(--text-subtle)">（純數字輸入時使用）</span></label>
       <input type="text" id="edIdCol" value="${esc(q.idColumn || '')}" placeholder="L.accountId">
-      <div class="help">輸入為純數字時，<code>{FILTER}</code> 會套成「<code>此欄位 IN (123, 456)</code>」。留空則此查詢僅支援帳號輸入。</div>
+      <div class="help">輸入為純數字時，<code>{FILTER}</code> 會套成「<code>此欄位 IN (123, 456)</code>」。留空則此查詢僅支援帳號輸入。<br>⚠ <b>只有用 <code>{FILTER}</code> 才需要填這欄</b>；用 <code>{LIST}</code> 或常用語法不用。</div>
     </div>
     <div class="form-row">
       <label>會員帳號欄位 <span style="color:var(--text-subtle)">（含 @ 輸入時使用）</span></label>
       <input type="text" id="edAccCol" value="${esc(q.accountColumn || '')}" placeholder="L.username">
-      <div class="help">輸入含 @ 時，<code>{FILTER}</code> 會套成「<code>此欄位 IN ('xx@AP', …)</code>」。留空則此查詢僅支援編號輸入。</div>
+      <div class="help">輸入含 @ 時，<code>{FILTER}</code> 會套成「<code>此欄位 IN ('xx@AP', …)</code>」。留空則此查詢僅支援編號輸入。<br>⚠ <b>只有用 <code>{FILTER}</code> 才需要填這欄</b>；用 <code>{LIST}</code> 或常用語法不用。</div>
     </div>
     <div class="form-row">
       <label>SQL（在條件處寫 <code>{FILTER}</code>）</label>
       <textarea id="edSql" style="min-height:280px;font-size:12.5px">${esc(q.sql || '')}</textarea>
-      <div class="help"><code>{FILTER}</code> 是特殊佔位符，會被替換成對應的 IN 條件。可放多個。</div>
+      <div class="help">
+        <b>三種佔位符可混用</b>：
+        <ul style="margin:4px 0 0; padding-left:18px; line-height:1.7;">
+          <li><code>{FILTER}</code> → 整段條件（自動填欄位名 + IN 列表），需設定上方編號/帳號欄位</li>
+          <li><code>{LIST}</code> → 純值列表，自己寫 <code>column IN ({LIST})</code>，不用設欄位</li>
+          <li><code>{任意名稱}</code>（如 <code>{startTime}</code>）→ 參數，產生時跳出表單填值</li>
+        </ul>
+        <span style="color:var(--text-subtle);">三者都沒有 → 常用語法（原樣輸出）</span>
+      </div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
       <button class="ghost" onclick="cancelEdit()">取消</button>
