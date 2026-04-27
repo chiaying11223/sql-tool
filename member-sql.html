@@ -467,6 +467,11 @@
     color: var(--text-subtle);
     background: transparent;
   }
+  .q-badge.static {
+    color: #c4b5fd;
+    border-color: rgba(167, 139, 250, 0.35);
+    background: rgba(167, 139, 250, 0.12);
+  }
   .q-add {
     display: flex;
     flex-direction: column;
@@ -1003,6 +1008,11 @@ let lastSyncStatus = null; // { ok, message, count, at }
 
 function isSheetMode() { return syncSource === 'sheet' && !!sheetUrl; }
 
+// 常用語法 = SQL 中沒有 {FILTER}，獨立執行不需名單
+function isStaticQuery(q) {
+  return !((q && q.sql) || '').includes('{FILTER}');
+}
+
 function loadQueries() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
@@ -1331,15 +1341,23 @@ function renderQueryList() {
     const isSelected = selectedIds.includes(q.id);
     const hasId = !!q.idColumn;
     const hasAcc = !!q.accountColumn;
-    // Compat: only disable if input exists and this query doesn't support it
+    // 常用語法（無 {FILTER}）→ 永遠可用
+    // 名單查詢 → 看當前輸入類型有沒有對應欄位
     let disabled = false;
-    if (type === 'member_id' && !hasId) disabled = true;
-    if (type === 'account' && !hasAcc) disabled = true;
+    if (!isStaticQuery(q)) {
+      if (type === 'member_id' && !hasId) disabled = true;
+      if (type === 'account' && !hasAcc) disabled = true;
+    }
 
+    const isStatic = isStaticQuery(q);
     const badges = [];
-    if (hasId) badges.push(`<span class="q-badge id">會員編號</span>`);
-    if (hasAcc) badges.push(`<span class="q-badge acc">會員帳號</span>`);
-    if (!hasId && !hasAcc) badges.push(`<span class="q-badge incompat">未設定</span>`);
+    if (isStatic) {
+      badges.push(`<span class="q-badge static">常用</span>`);
+    } else {
+      if (hasId) badges.push(`<span class="q-badge id">會員編號</span>`);
+      if (hasAcc) badges.push(`<span class="q-badge acc">會員帳號</span>`);
+      if (!hasId && !hasAcc) badges.push(`<span class="q-badge incompat">未設定</span>`);
+    }
 
     return `
       <div class="q-card ${isSelected ? 'selected' : ''} ${disabled ? 'disabled' : ''}"
@@ -1401,13 +1419,25 @@ function selectAll(on) {
  * ================================================== */
 function updateActionBar() {
   const n = inputCache.unique.length;
-  const s = selectedIds.length;
+  const selectedQs = queries.filter(q => selectedIds.includes(q.id));
+  const s = selectedQs.length;
+  const hasStatic = selectedQs.some(isStaticQuery);
+  const hasList = selectedQs.some(q => !isStaticQuery(q));
+
   let msg;
-  if (!n) msg = `尚未輸入`;
-  else if (!s) msg = `<b>${n}</b> 筆會員 ・ 尚未選查詢`;
-  else msg = `<b>${n}</b> 筆會員 ・ 已選 <b>${s}</b> 個查詢`;
+  if (!s) {
+    msg = n ? `<b>${n}</b> 筆會員 ・ 尚未選查詢` : `尚未選查詢`;
+  } else if (hasList && !n) {
+    msg = `已選 <b>${s}</b> 個查詢 ・ 名單查詢需要清單`;
+  } else if (n) {
+    msg = `<b>${n}</b> 筆會員 ・ 已選 <b>${s}</b> 個查詢`;
+  } else {
+    msg = `已選 <b>${s}</b> 個常用語法`;
+  }
   $('actionSummary').innerHTML = msg;
-  $('genBtn').disabled = !(n && s);
+
+  // 啟用條件：有選擇 AND（有清單 OR 至少有一個常用語法）
+  $('genBtn').disabled = !(s > 0 && (n > 0 || hasStatic));
 }
 
 function updateModeBadge() {
@@ -1888,12 +1918,11 @@ async function saveQuery() {
   const accCol = $('edAccCol').value.trim();
   if (!name) { toast('請輸入名稱', 'warning'); $('edName').focus(); return; }
   if (!sql) { toast('請輸入 SQL', 'warning'); $('edSql').focus(); return; }
-  if (!idCol && !accCol) {
-    toast('請至少填寫一個欄位（編號或帳號）', 'warning'); return;
+  const hasFilter = sql.includes('{FILTER}');
+  if (hasFilter && !idCol && !accCol) {
+    toast('SQL 含 {FILTER}（名單查詢），需填寫編號或帳號欄位', 'warning'); return;
   }
-  if (!sql.includes('{FILTER}')) {
-    if (!confirm('SQL 中沒有 {FILTER} 標記，這樣不會套入會員條件。確定儲存？')) return;
-  }
+  // 沒有 {FILTER} → 視為常用語法，欄位可空
   const data = {
     id: editingId || ('q_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6)),
     name,
@@ -2032,13 +2061,16 @@ function highlightSql(sql) {
 }
 
 function generate() {
-  if (!inputCache.unique.length) {
-    toast('請先輸入清單或上傳檔案', 'warning');
-    $('inputArea').focus();
-    return;
-  }
   if (!selectedIds.length) {
     toast('請至少勾選一個查詢', 'warning');
+    return;
+  }
+  const selectedQs = queries.filter(q => selectedIds.includes(q.id));
+  const hasNonStatic = selectedQs.some(q => !isStaticQuery(q));
+  // 只勾常用語法 → 不需要清單；有勾名單查詢 → 需要清單
+  if (hasNonStatic && !inputCache.unique.length) {
+    toast('名單查詢需要先貼清單或上傳檔案', 'warning');
+    $('inputArea').focus();
     return;
   }
 
@@ -2061,6 +2093,13 @@ function generate() {
   const skipped = [];
 
   for (const q of selectedQueries) {
+    if (isStaticQuery(q)) {
+      // 常用語法：原樣輸出，不套清單
+      blocks.push({ q, sql: q.sql });
+      continue;
+    }
+    // 名單查詢：要有清單才能套
+    if (!unique.length) { skipped.push(q.name + '（需要名單）'); continue; }
     const col = type === 'member_id' ? q.idColumn : q.accountColumn;
     if (!col) { skipped.push(q.name); continue; }
     const filter = `${col} IN (${listStr})`;
@@ -2069,7 +2108,7 @@ function generate() {
   }
 
   const pillClass = type === 'account' ? 'type-pill account' : 'type-pill';
-  const metaHtml = `
+  const metaHtml = unique.length ? `
     <div class="output-meta">
       <span><span class="${pillClass}">${typeLabel}</span></span>
       <span><span class="label">總筆數</span><b>${inputCache.items.length}</b></span>
@@ -2077,10 +2116,15 @@ function generate() {
       ${dropped ? `<span style="color:var(--warning)"><span class="label">忽略非數字</span><b>${dropped}</b></span>` : ''}
       <span style="color:var(--text-subtle);margin-left:auto"><span class="label">來源</span>${esc(inputCache.source)}</span>
     </div>
+  ` : `
+    <div class="output-meta">
+      <span><span class="type-pill" style="background:rgba(167,139,250,0.12);color:#c4b5fd;">📝 常用語法</span></span>
+      <span style="color:var(--text-subtle);margin-left:auto">無清單模式 ・ 共 ${blocks.length} 段</span>
+    </div>
   `;
 
   const warnHtml = skipped.length ? `
-    <div class="warn-inline">⚠ 因輸入類型不符，略過 ${skipped.length} 個查詢：${esc(skipped.join('、'))}</div>
+    <div class="warn-inline">⚠ 略過 ${skipped.length} 個：${esc(skipped.join('、'))}</div>
   ` : '';
 
   const blocksHtml = blocks.map((b, i) => `
