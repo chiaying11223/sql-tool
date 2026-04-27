@@ -472,6 +472,11 @@
     border-color: rgba(167, 139, 250, 0.35);
     background: rgba(167, 139, 250, 0.12);
   }
+  .q-badge.param {
+    color: #fbbf24;
+    border-color: rgba(251, 191, 36, 0.35);
+    background: rgba(251, 191, 36, 0.12);
+  }
   .q-add {
     display: flex;
     flex-direction: column;
@@ -966,6 +971,22 @@
   </div>
 </aside>
 
+<!-- Parameter Input Modal -->
+<div class="modal" id="paramModal" hidden>
+  <div class="modal-backdrop" onclick="cancelParams()"></div>
+  <div class="modal-panel">
+    <div class="modal-header">
+      <h2>📝 填入參數</h2>
+      <button class="icon-btn" onclick="cancelParams()">✕</button>
+    </div>
+    <div class="modal-body" id="paramFormBody"></div>
+    <div style="padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 8px; flex-shrink: 0;">
+      <button class="ghost" onclick="cancelParams()">取消</button>
+      <button onclick="confirmParams()">產生 SQL</button>
+    </div>
+  </div>
+</div>
+
 <!-- Sync Settings Modal -->
 <div class="modal" id="syncModal" hidden>
   <div class="modal-backdrop" onclick="closeSyncModal()"></div>
@@ -1008,9 +1029,26 @@ let lastSyncStatus = null; // { ok, message, count, at }
 
 function isSheetMode() { return syncSource === 'sheet' && !!sheetUrl; }
 
-// 常用語法 = SQL 中沒有 {FILTER}，獨立執行不需名單
+// 常用語法 = SQL 中沒有 {FILTER} 也沒有 {LIST}（不需名單）
 function isStaticQuery(q) {
-  return !((q && q.sql) || '').includes('{FILTER}');
+  const sql = (q && q.sql) || '';
+  return !sql.includes('{FILTER}') && !sql.includes('{LIST}');
+}
+
+// 是否為「彈性名單」查詢（用 {LIST}，不依賴 idColumn/accountColumn）
+function hasListPlaceholder(q) {
+  return ((q && q.sql) || '').includes('{LIST}');
+}
+
+// 抓出 SQL 中所有 {參數} 佔位符（排除 {FILTER}）
+function extractParams(sql) {
+  const re = /\{([A-Za-z_]\w*)\}/g;
+  const set = new Set();
+  let m;
+  while ((m = re.exec(sql || '')) !== null) {
+    if (m[1] !== 'FILTER') set.add(m[1]);
+  }
+  return Array.from(set);
 }
 
 function loadQueries() {
@@ -1344,19 +1382,28 @@ function renderQueryList() {
     // 常用語法（無 {FILTER}）→ 永遠可用
     // 名單查詢 → 看當前輸入類型有沒有對應欄位
     let disabled = false;
-    if (!isStaticQuery(q)) {
+    // 名單查詢才需要檢查欄位；{LIST} 兩種輸入都支援，不檢查
+    if (!isStaticQuery(q) && !hasListPlaceholder(q)) {
       if (type === 'member_id' && !hasId) disabled = true;
       if (type === 'account' && !hasAcc) disabled = true;
     }
 
     const isStatic = isStaticQuery(q);
+    const hasList = hasListPlaceholder(q);
+    const params = extractParams(q.sql);
+    const hasParams = params.length > 0;
     const badges = [];
     if (isStatic) {
-      badges.push(`<span class="q-badge static">常用</span>`);
+      if (hasParams) badges.push(`<span class="q-badge param">參數 × ${params.length}</span>`);
+      else badges.push(`<span class="q-badge static">常用</span>`);
+    } else if (hasList) {
+      badges.push(`<span class="q-badge id">名單</span>`);
+      if (hasParams) badges.push(`<span class="q-badge param">參數 × ${params.length}</span>`);
     } else {
       if (hasId) badges.push(`<span class="q-badge id">會員編號</span>`);
       if (hasAcc) badges.push(`<span class="q-badge acc">會員帳號</span>`);
       if (!hasId && !hasAcc) badges.push(`<span class="q-badge incompat">未設定</span>`);
+      if (hasParams) badges.push(`<span class="q-badge param">參數 × ${params.length}</span>`);
     }
 
     return `
@@ -1497,6 +1544,56 @@ function renderManageTab() {
   renderManageList();
   updateModeBadge();
   updateManageCount();
+}
+
+/* ==================================================
+ * Parameter input (for queries with {xxx} placeholders)
+ * ================================================== */
+const PARAM_HISTORY_KEY = 'member_sql_param_history_v1';
+let paramResolve = null;
+
+function loadParamHistory() {
+  try { return JSON.parse(localStorage.getItem(PARAM_HISTORY_KEY) || '{}'); }
+  catch { return {}; }
+}
+function saveParamHistory(values) {
+  const merged = { ...loadParamHistory(), ...values };
+  localStorage.setItem(PARAM_HISTORY_KEY, JSON.stringify(merged));
+}
+
+function promptForParams(paramNames) {
+  return new Promise(resolve => {
+    paramResolve = resolve;
+    const history = loadParamHistory();
+    const html = paramNames.map(name => `
+      <div class="form-row">
+        <label>${esc(name)}</label>
+        <input type="text" data-param="${esc(name)}" value="${esc(history[name] || '')}" placeholder="輸入 ${esc(name)} 的值，例如 2026-04-27 12:00">
+      </div>
+    `).join('');
+    $('paramFormBody').innerHTML = html + `
+      <div class="help" style="margin-top:4px;">💡 上次填的值會自動帶入。值不需要加引號（SQL 裡的引號保留）。</div>
+    `;
+    $('paramModal').hidden = false;
+    setTimeout(() => {
+      const first = $('paramFormBody').querySelector('input');
+      if (first) first.focus();
+    }, 50);
+  });
+}
+
+function confirmParams() {
+  const inputs = $('paramFormBody').querySelectorAll('input[data-param]');
+  const values = {};
+  for (const inp of inputs) values[inp.dataset.param] = inp.value;
+  saveParamHistory(values);
+  $('paramModal').hidden = true;
+  if (paramResolve) { paramResolve(values); paramResolve = null; }
+}
+
+function cancelParams() {
+  $('paramModal').hidden = true;
+  if (paramResolve) { paramResolve(null); paramResolve = null; }
 }
 
 function openSyncModal() {
@@ -1841,13 +1938,14 @@ function autoParseSql() {
   const raw = ($('edPaste').value || '').trim();
   if (!raw) { toast('請先貼 SQL', 'warning'); return; }
 
-  // Find "column IN (...)" patterns. Column can be bare (Account), dotted (L.accountId),
-  // or bracketed ([col], [alias].[col]).
-  const re = /((?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s+IN\s*\(\s*([^)]+?)\s*\)/gi;
+  // 1) 找「column IN (...)」模式
+  const reIn = /((?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s+IN\s*\(\s*([^)]+?)\s*\)/gi;
+  // 2) 找「column = 'value'」或「column = number」模式
+  const reEq = /((?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s*=\s*('[^']*'|\d+)/gi;
 
   const memberMatches = [];
   let m;
-  while ((m = re.exec(raw)) !== null) {
+  while ((m = reIn.exec(raw)) !== null) {
     const col = m[1];
     const valuesRaw = m[2];
     const hasAt = /'[^']*@[^']*'/.test(valuesRaw);
@@ -1856,11 +1954,22 @@ function autoParseSql() {
     const hasLargeNum = numbers.some(n => parseInt(n, 10) >= 10000);
 
     if (hasAt) {
-      memberMatches.push({ type: 'account', column: col, full: m[0] });
+      memberMatches.push({ type: 'account', column: col, full: m[0], op: 'in' });
     } else if (!hasQuotes && hasLargeNum) {
-      memberMatches.push({ type: 'member_id', column: col, full: m[0] });
+      memberMatches.push({ type: 'member_id', column: col, full: m[0], op: 'in' });
     }
-    // else: small-integer IN (event codes etc) — skip
+  }
+  while ((m = reEq.exec(raw)) !== null) {
+    const col = m[1];
+    const valueRaw = m[2];
+    const hasAt = /'[^']*@[^']*'/.test(valueRaw);
+    const isNum = /^\d+$/.test(valueRaw);
+    const numVal = isNum ? parseInt(valueRaw, 10) : 0;
+    if (hasAt) {
+      memberMatches.push({ type: 'account', column: col, full: m[0], op: 'eq' });
+    } else if (isNum && numVal >= 10000) {
+      memberMatches.push({ type: 'member_id', column: col, full: m[0], op: 'eq' });
+    }
   }
 
   if (!memberMatches.length) {
@@ -1868,15 +1977,25 @@ function autoParseSql() {
     return;
   }
 
-  // Replace each match with {FILTER}
+  // 判斷模式：
+  //  - 單一欄位 + IN → 用 {FILTER}（最精簡，會自動填欄位名）
+  //  - 多個欄位 / 用 = 比對 → 用 {LIST}（更彈性，OR 結構保留）
+  const uniqCols = [...new Set(memberMatches.map(x => x.column))];
+  const useList = uniqCols.length > 1 || memberMatches.some(x => x.op === 'eq');
+
   let newSql = raw;
   let foundId = '', foundAcc = '';
-  const cleanCol = c => c.replace(/\[|\]/g, '');
 
   for (const mm of memberMatches) {
-    newSql = newSql.split(mm.full).join('{FILTER}');
-    if (mm.type === 'account' && !foundAcc) foundAcc = mm.column;
-    if (mm.type === 'member_id' && !foundId) foundId = mm.column;
+    if (useList) {
+      // column = 'x'  →  column IN ({LIST})
+      // column IN (...) →  column IN ({LIST})
+      newSql = newSql.split(mm.full).join(`${mm.column} IN ({LIST})`);
+    } else {
+      newSql = newSql.split(mm.full).join('{FILTER}');
+      if (mm.type === 'account' && !foundAcc) foundAcc = mm.column;
+      if (mm.type === 'member_id' && !foundId) foundId = mm.column;
+    }
   }
 
   // Extract a suggested name from first real FROM table reference.
@@ -2064,7 +2183,7 @@ function highlightSql(sql) {
     .replace(/\b(\d+)\b/g, '<span class="num">$1</span>');
 }
 
-function generate() {
+async function generate() {
   if (!selectedIds.length) {
     toast('請至少勾選一個查詢', 'warning');
     return;
@@ -2076,6 +2195,18 @@ function generate() {
     toast('名單查詢需要先貼清單或上傳檔案', 'warning');
     $('inputArea').focus();
     return;
+  }
+
+  // 收集所有選到的查詢中的參數
+  const allParams = new Set();
+  for (const q of selectedQs) {
+    for (const p of extractParams(q.sql)) allParams.add(p);
+  }
+  let paramValues = {};
+  if (allParams.size) {
+    const result = await promptForParams(Array.from(allParams));
+    if (result === null) return; // 使用者取消
+    paramValues = result;
   }
 
   const unique = inputCache.unique;
@@ -2096,18 +2227,34 @@ function generate() {
   const blocks = [];
   const skipped = [];
 
+  // 套參數值的小工具
+  const applyParams = (sql) => {
+    let out = sql;
+    for (const [name, value] of Object.entries(paramValues)) {
+      out = out.split(`{${name}}`).join(value);
+    }
+    return out;
+  };
+
   for (const q of selectedQueries) {
     if (isStaticQuery(q)) {
-      // 常用語法：原樣輸出，不套清單
-      blocks.push({ q, sql: q.sql });
+      // 常用語法：套參數後原樣輸出
+      blocks.push({ q, sql: applyParams(q.sql) });
       continue;
     }
     // 名單查詢：要有清單才能套
     if (!unique.length) { skipped.push(q.name + '（需要名單）'); continue; }
-    const col = type === 'member_id' ? q.idColumn : q.accountColumn;
-    if (!col) { skipped.push(q.name); continue; }
-    const filter = `${col} IN (${listStr})`;
-    const sql = q.sql.split('{FILTER}').join(filter);
+
+    let sql = q.sql;
+    // 1) {LIST} → 純值列表（使用者自己寫 column IN ({LIST})）
+    sql = sql.split('{LIST}').join(listStr);
+    // 2) {FILTER} → 完整條件子句（用 idColumn/accountColumn 自動組）
+    if (sql.includes('{FILTER}')) {
+      const col = type === 'member_id' ? q.idColumn : q.accountColumn;
+      if (!col) { skipped.push(q.name + '（{FILTER} 需設定欄位）'); continue; }
+      sql = sql.split('{FILTER}').join(`${col} IN (${listStr})`);
+    }
+    sql = applyParams(sql);
     blocks.push({ q, sql });
   }
 
@@ -2227,7 +2374,8 @@ $('genBtn').addEventListener('click', generate);
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (!$('syncModal').hidden) closeSyncModal();
+    if (!$('paramModal').hidden) cancelParams();
+    else if (!$('syncModal').hidden) closeSyncModal();
     else if ($('drawer').classList.contains('open')) closeDrawer();
   }
 });
