@@ -1972,10 +1972,8 @@ function autoParseSql() {
     }
   }
 
-  if (!memberMatches.length) {
-    toast('找不到會員條件（含 @ 或 ≥10000 的 IN 子句）。請手動把會員條件改成 {FILTER}', 'warning', 4500);
-    return;
-  }
+  // 名單和日期都沒偵測到才提示
+  // （日期偵測在後面，所以先暫存名單結果，整段最後判斷）
 
   // 判斷模式：
   //  - 單一欄位 + IN → 用 {FILTER}（最精簡，會自動填欄位名）
@@ -1996,6 +1994,30 @@ function autoParseSql() {
       if (mm.type === 'account' && !foundAcc) foundAcc = mm.column;
       if (mm.type === 'member_id' && !foundId) foundId = mm.column;
     }
+  }
+
+  // 3) 自動偵測日期字串並轉成參數佔位符
+  // 比對 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM' 或 'YYYY-MM-DD HH:MM:SS'
+  const reDate = /'(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)'/g;
+  const dateNames = ['startTime', 'endTime', 'date3', 'date4', 'date5', 'date6'];
+  const detectedDates = [];
+  // 收集所有日期出現位置（避免 replace 影響後續比對）
+  let dm;
+  const reDate2 = new RegExp(reDate.source, 'g');
+  while ((dm = reDate2.exec(newSql)) !== null) {
+    detectedDates.push({ full: dm[0], value: dm[1] });
+  }
+  // 從後往前替換，避免位置錯亂
+  detectedDates.reverse();
+  let dateIdx = detectedDates.length - 1;
+  for (const dt of detectedDates) {
+    const name = dateNames[dateIdx] || `date${dateIdx + 1}`;
+    // 只替換第一個剩餘的相同字串（用 split/join 較安全）
+    const idx = newSql.lastIndexOf(dt.full);
+    if (idx >= 0) {
+      newSql = newSql.slice(0, idx) + `'{${name}}'` + newSql.slice(idx + dt.full.length);
+    }
+    dateIdx--;
   }
 
   // Extract a suggested name from first real FROM table reference.
@@ -2027,10 +2049,19 @@ function autoParseSql() {
     }
   }
 
-  const summary = memberMatches
-    .map(x => `${x.column}（${x.type === 'account' ? '帳號' : '編號'}）`)
-    .join('、');
-  toast(`✨ 解析成功：${summary}`, 'success', 3500);
+  const parts = [];
+  if (memberMatches.length) {
+    parts.push(memberMatches.map(x => `${x.column}（${x.type === 'account' ? '帳號' : '編號'}）`).join('、'));
+  }
+  if (detectedDates.length) {
+    const namesUsed = detectedDates.slice().reverse().map((_, i) => dateNames[i] || `date${i + 1}`);
+    parts.push(`日期參數：${namesUsed.join('、')}`);
+  }
+  if (!parts.length) {
+    toast('沒偵測到名單條件或日期 — 你可以直接存成「常用語法」，或手動把要參數化的值改成 {參數名}', 'warning', 5500);
+    return;
+  }
+  toast(`✨ 解析成功：${parts.join(' ・ ')}`, 'success', 4500);
   $('edPaste').value = '';
 }
 
