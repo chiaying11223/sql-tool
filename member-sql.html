@@ -1488,11 +1488,15 @@ function switchTab(name) {
   }
 }
 
+function updateManageCount() {
+  const c = $('manageCount');
+  if (c) c.textContent = queries.length;
+}
+
 function renderManageTab() {
   renderManageList();
   updateModeBadge();
-  const c = $('manageCount');
-  if (c) c.textContent = queries.length;
+  updateManageCount();
 }
 
 function openSyncModal() {
@@ -2254,6 +2258,7 @@ async function initApp() {
   renderQueryList();
   updateActionBar();
   updateStepStates();
+  updateManageCount();
 }
 
 initApp();
