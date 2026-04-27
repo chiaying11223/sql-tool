@@ -953,6 +953,7 @@
 <div class="action-bar" id="actionBar">
   <div class="action-bar-inner">
     <div class="action-summary" id="actionSummary">尚未輸入</div>
+    <button class="secondary" id="rawBtn" title="顯示原始語法（含佔位符），不替換參數">📚 原始</button>
     <button class="primary-lg" id="genBtn">產生 SQL ➜</button>
   </div>
 </div>
@@ -1532,7 +1533,7 @@ function updateActionBar() {
   if (!s) {
     msg = n ? `<b>${n}</b> 筆會員 ・ 尚未選查詢` : `尚未選查詢`;
   } else if (hasList && !n) {
-    msg = `已選 <b>${s}</b> 個查詢 ・ 名單查詢需要清單`;
+    msg = `已選 <b>${s}</b> 個查詢 ・ 按下後會問你要查誰`;
   } else if (n) {
     msg = `<b>${n}</b> 筆會員 ・ 已選 <b>${s}</b> 個查詢`;
   } else {
@@ -1540,8 +1541,8 @@ function updateActionBar() {
   }
   $('actionSummary').innerHTML = msg;
 
-  // 啟用條件：有選擇 AND（有清單 OR 至少有一個常用語法）
-  $('genBtn').disabled = !(s > 0 && (n > 0 || hasStatic));
+  // 只要選了查詢就能按；缺名單或要參數時 generate() 會跳視窗問
+  $('genBtn').disabled = s === 0;
 }
 
 function updateModeBadge() {
@@ -1783,6 +1784,8 @@ function renderManageList() {
         <div class="name">${esc(q.name)}</div>
         <div class="desc">${esc(q.description || '（無描述）')}</div>
       </div>
+      <button class="ghost" data-act="copy" title="複製原始語法">📋</button>
+      <button class="ghost" data-act="preview" title="預覽語法">👁</button>
       <button class="icon-btn" data-act="up" ${i === 0 ? 'disabled' : ''}>↑</button>
       <button class="icon-btn" data-act="down" ${i === queries.length - 1 ? 'disabled' : ''}>↓</button>
       <button class="secondary" data-act="edit">編輯</button>
@@ -1798,9 +1801,32 @@ function renderManageList() {
         else if (act === 'down') moveQuery(id, 1);
         else if (act === 'edit') editQuery(id);
         else if (act === 'del') deleteQuery(id);
+        else if (act === 'copy') copyRawSql(id);
+        else if (act === 'preview') previewQuery(id);
       });
     });
   });
+}
+
+async function copyRawSql(id) {
+  const q = queries.find(x => x.id === id);
+  if (!q) return;
+  try {
+    await navigator.clipboard.writeText(q.sql);
+    toast(`✓ 已複製「${q.name}」原始語法`, 'success');
+  } catch {
+    toast('複製失敗', 'error');
+  }
+}
+
+function previewQuery(id) {
+  const q = queries.find(x => x.id === id);
+  if (!q) return;
+  // 切到產生頁籤、勾這一筆，按下「原始語法」直接看
+  selectedIds = [id];
+  saveSelected();
+  switchTab('generate');
+  generateRaw();
 }
 
 function showEditor() {
@@ -2681,6 +2707,55 @@ dropzone.addEventListener('drop', e => {
 
 $('inputArea').addEventListener('input', updateInputCache);
 $('genBtn').addEventListener('click', generate);
+$('rawBtn').addEventListener('click', generateRaw);
+
+function generateRaw() {
+  if (!selectedIds.length) {
+    toast('請至少勾選一個查詢', 'warning');
+    return;
+  }
+  const selectedQs = queries.filter(q => selectedIds.includes(q.id));
+  const blocks = selectedQs.map(q => ({ q, sql: q.sql }));
+
+  const headerHtml = `
+    <div class="output-meta">
+      <span><span class="type-pill" style="background:rgba(167,139,250,0.12);color:#c4b5fd;">📚 原始語法</span></span>
+      <span style="color:var(--text-subtle);">含 <code>{FILTER}</code> / <code>{LIST}</code> / <code>{參數}</code> 等佔位符，未替換 ・ 共 ${blocks.length} 段</span>
+    </div>
+  `;
+  const blocksHtml = blocks.map((b, i) => `
+    <div class="sql-card">
+      <div class="sql-card-header">
+        <div>
+          <div class="title">${esc(b.q.name)}</div>
+          ${b.q.description ? `<div class="desc">${esc(b.q.description)}</div>` : ''}
+        </div>
+        <div class="spacer"></div>
+        <button class="secondary copy-btn" data-copy="raw_${i}">📋 複製</button>
+      </div>
+      <pre id="raw_${i}" data-raw="${esc(b.sql)}">${highlightSql(b.sql)}</pre>
+    </div>
+  `).join('');
+  $('output').innerHTML = headerHtml + blocksHtml;
+
+  $('output').querySelectorAll('.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const target = document.getElementById(btn.dataset.copy);
+      const text = target.dataset.raw;
+      try {
+        await navigator.clipboard.writeText(text);
+        const orig = btn.innerHTML;
+        btn.innerHTML = '✓ 已複製';
+        setTimeout(() => { btn.innerHTML = orig; }, 1400);
+        toast('已複製到剪貼簿', 'success', 1400);
+      } catch {
+        toast('複製失敗', 'error');
+      }
+    });
+  });
+
+  setTimeout(() => $('step3').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+}
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
