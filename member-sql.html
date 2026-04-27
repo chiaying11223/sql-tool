@@ -971,6 +971,25 @@
   </div>
 </aside>
 
+<!-- Column Picker Modal (auto-parse 用) -->
+<div class="modal" id="columnPickerModal" hidden>
+  <div class="modal-backdrop" onclick="cancelColumnPicker()"></div>
+  <div class="modal-panel" style="width:min(720px, 92vw);">
+    <div class="modal-header">
+      <h2>🔧 選擇要加入「選填條件」的欄位</h2>
+      <button class="icon-btn" onclick="cancelColumnPicker()">✕</button>
+    </div>
+    <div class="modal-body" id="columnPickerBody"></div>
+    <div style="padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-shrink: 0;">
+      <div style="font-size:11px; color:var(--text-subtle);">勾選的欄位會變成「選填」— 產生時填值才加進條件，留空則整段省略</div>
+      <div style="display:flex; gap:8px;">
+        <button class="ghost" onclick="cancelColumnPicker()">略過</button>
+        <button onclick="confirmColumnPicker()">套用</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Parameter Input Modal -->
 <div class="modal" id="paramModal" hidden>
   <div class="modal-backdrop" onclick="cancelParams()"></div>
@@ -1049,6 +1068,44 @@ function extractParams(sql) {
     if (m[1] !== 'FILTER') set.add(m[1]);
   }
   return Array.from(set);
+}
+
+// 抓出 SQL 中「只」出現在 {? ?} 選填區塊內的參數名（這些參數是選填）
+function getOptionalParams(sql) {
+  const s = sql || '';
+  const optional = new Set();
+  const required = new Set();
+  // 1) 抓 {? ?} 區塊內的參數
+  const blocks = [...s.matchAll(/\{\?([\s\S]*?)\?\}/g)].map(m => m[1]).join(' ');
+  for (const m of blocks.matchAll(/\{([A-Za-z_]\w*)\}/g)) {
+    if (m[1] !== 'FILTER') optional.add(m[1]);
+  }
+  // 2) 抓區塊外的參數（這些是必填）
+  const stripped = s.replace(/\{\?[\s\S]*?\?\}/g, '');
+  for (const m of stripped.matchAll(/\{([A-Za-z_]\w*)\}/g)) {
+    if (m[1] !== 'FILTER') required.add(m[1]);
+  }
+  // 「真的選填」= 只在區塊內出現，沒在區塊外被需要
+  const result = new Set();
+  for (const n of optional) if (!required.has(n)) result.add(n);
+  return result;
+}
+
+// 處理選填區塊：區塊內所有參數都有值就保留並替換，任一個沒值就整段砍掉
+function processOptionalBlocks(sql, paramValues) {
+  return (sql || '').replace(/\{\?([\s\S]*?)\?\}/g, (full, inner) => {
+    const innerParams = [...inner.matchAll(/\{([A-Za-z_]\w*)\}/g)].map(m => m[1]).filter(n => n !== 'FILTER');
+    if (innerParams.length === 0) return inner;
+    for (const p of innerParams) {
+      const v = paramValues[p];
+      if (v == null || String(v).trim() === '') return ''; // 任一空 → 整段省略
+    }
+    let result = inner;
+    for (const p of innerParams) {
+      result = result.split('{' + p + '}').join(paramValues[p]);
+    }
+    return result;
+  });
 }
 
 function loadQueries() {
@@ -1561,7 +1618,7 @@ function saveParamHistory(values) {
   localStorage.setItem(PARAM_HISTORY_KEY, JSON.stringify(merged));
 }
 
-function promptForParams(paramNames, opts = {}) {
+function promptForParams(paramSpecs, opts = {}) {
   return new Promise(resolve => {
     paramResolve = resolve;
     const history = loadParamHistory();
@@ -1577,10 +1634,13 @@ function promptForParams(paramNames, opts = {}) {
       `;
     }
 
-    html += paramNames.map(name => `
+    // 兼容舊格式：如果傳的是字串陣列，轉成 {name, optional:false}
+    const specs = (paramSpecs || []).map(p => typeof p === 'string' ? { name: p, optional: false } : p);
+
+    html += specs.map(({ name, optional }) => `
       <div class="form-row">
-        <label>${esc(name)}</label>
-        <input type="text" data-param="${esc(name)}" value="${esc(history[name] || '')}" placeholder="輸入 ${esc(name)} 的值，例如 2026-04-27 12:00">
+        <label>${esc(name)}${optional ? ' <span style="color:var(--text-subtle); font-weight:400;">（選填，留空會省略對應段落）</span>' : ''}</label>
+        <input type="text" data-param="${esc(name)}" value="${esc(history[name] || '')}" placeholder="${optional ? '留空略過' : '輸入 ' + esc(name) + ' 的值，例如 2026-04-27 12:00'}">
       </div>
     `).join('');
 
@@ -1611,6 +1671,58 @@ function confirmParams() {
 function cancelParams() {
   $('paramModal').hidden = true;
   if (paramResolve) { paramResolve(null); paramResolve = null; }
+}
+
+/* ==================================================
+ * Column Picker（自動解析時，讓使用者勾選要加選填條件的欄位）
+ * ================================================== */
+let columnPickerResolve = null;
+let columnPickerCandidates = [];
+
+function promptForColumns(candidates) {
+  return new Promise(resolve => {
+    columnPickerResolve = resolve;
+    columnPickerCandidates = candidates;
+    const html = `
+      <div style="display:flex; gap:6px; margin-bottom:12px;">
+        <button class="ghost" type="button" onclick="checkAllColumns(true)">全選</button>
+        <button class="ghost" type="button" onclick="checkAllColumns(false)">全不選</button>
+        <button class="ghost" type="button" onclick="checkRecommended()">只勾推薦（Id / Name）</button>
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:6px;">
+        ${candidates.map((c, i) => `
+          <label style="display:flex; align-items:center; gap:8px; padding:8px 12px; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; cursor:pointer;">
+            <input type="checkbox" data-col-idx="${i}" ${c.defaultChecked ? 'checked' : ''} style="accent-color:var(--accent);">
+            <code style="font-size:12px;">${esc(c.alias)}.${esc(c.col)}</code>
+            ${c.defaultChecked ? '<span style="color:var(--accent); font-size:10px; margin-left:auto;">推薦</span>' : ''}
+          </label>
+        `).join('')}
+      </div>
+    `;
+    $('columnPickerBody').innerHTML = html;
+    $('columnPickerModal').hidden = false;
+  });
+}
+
+function checkAllColumns(state) {
+  $('columnPickerBody').querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = state);
+}
+function checkRecommended() {
+  $('columnPickerBody').querySelectorAll('input[type=checkbox]').forEach(cb => {
+    const idx = parseInt(cb.dataset.colIdx);
+    cb.checked = !!columnPickerCandidates[idx]?.defaultChecked;
+  });
+}
+
+function confirmColumnPicker() {
+  const checked = $('columnPickerBody').querySelectorAll('input[type=checkbox]:checked');
+  const selected = Array.from(checked).map(c => columnPickerCandidates[parseInt(c.dataset.colIdx)]);
+  $('columnPickerModal').hidden = true;
+  if (columnPickerResolve) { columnPickerResolve(selected); columnPickerResolve = null; }
+}
+function cancelColumnPicker() {
+  $('columnPickerModal').hidden = true;
+  if (columnPickerResolve) { columnPickerResolve([]); columnPickerResolve = null; }
 }
 
 function openSyncModal() {
@@ -1906,13 +2018,16 @@ function renderEditor(q) {
       <label>SQL（在條件處寫 <code>{FILTER}</code>）</label>
       <textarea id="edSql" style="min-height:280px;font-size:12.5px">${esc(q.sql || '')}</textarea>
       <div class="help">
-        <b>三種佔位符可混用</b>：
+        <b>佔位符可混用</b>：
         <ul style="margin:4px 0 0; padding-left:18px; line-height:1.7;">
           <li><code>{FILTER}</code> → 整段條件（自動填欄位名 + IN 列表），需設定上方編號/帳號欄位</li>
           <li><code>{LIST}</code> → 純值列表，自己寫 <code>column IN ({LIST})</code>，不用設欄位</li>
           <li><code>{任意名稱}</code>（如 <code>{startTime}</code>）→ 參數，產生時跳出表單填值</li>
+          <li><code>{? ... ?}</code> → <b>選填條件區塊</b>。內含 <code>{itemId}</code> 之類的參數，<b>留空就整段省略</b>，填了才加進 SQL。例：<br>
+            <code style="display:block; padding:4px 8px; margin-top:4px;">WHERE date &gt;= '{startTime}'<br>{? AND ItemId IN ({itemId}) ?}<br>{? AND ItemName IN ({itemName}) ?}</code>
+          </li>
         </ul>
-        <span style="color:var(--text-subtle);">三者都沒有 → 常用語法（原樣輸出）</span>
+        <span style="color:var(--text-subtle);">什麼佔位符都沒有 → 常用語法（原樣輸出）</span>
       </div>
     </div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
@@ -1920,6 +2035,67 @@ function renderEditor(q) {
       <button onclick="saveQuery()">儲存</button>
     </div>
   `;
+}
+
+// 偵測 SQL 中所有可作為選填條件的欄位（從 SELECT + JOIN ON 抓 alias.column）
+function detectColumnCandidates(rawSql) {
+  // 1) 抓 SELECT clause（從 SELECT 到第一個外層 FROM）
+  const selMatch = rawSql.match(/\bSELECT\b/i);
+  if (!selMatch) return [];
+  const start = selMatch.index + selMatch[0].length;
+  let depth = 0, fromIdx = -1, inStr = false;
+  for (let i = start; i < rawSql.length; i++) {
+    const c = rawSql[i];
+    if (inStr) { if (c === "'" && rawSql[i - 1] !== '\\') inStr = false; continue; }
+    if (c === "'") { inStr = true; continue; }
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    if (depth === 0 && /^\s+from\b/i.test(rawSql.substr(i, 6))) { fromIdx = i; break; }
+  }
+  if (fromIdx < 0) return [];
+  const selectClause = rawSql.substring(start, fromIdx);
+
+  // 2) 抓所有 JOIN ... ON ... 條件（通常含其他可篩選欄位）
+  const joinTexts = [];
+  for (const m of rawSql.matchAll(/\bON\b([\s\S]*?)(?=\b(?:JOIN|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT)\b|;|$)/gi)) {
+    joinTexts.push(m[1]);
+  }
+  const allText = selectClause + ' ' + joinTexts.join(' ');
+
+  // 3) 抓出所有 alias.ColumnName，去重 + 過濾時間類
+  const seen = new Set();
+  const out = [];
+  for (const m of allText.matchAll(/([A-Za-z_]\w*)\.([A-Za-z_]\w*)/g)) {
+    const alias = m[1], col = m[2], key = `${alias}.${col}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (/Time$|Date$|CreateTime|UpdateTime|RecordTime/i.test(col)) continue;
+    const paramName = col.charAt(0).toLowerCase() + col.slice(1);
+    // Id/Name 預設勾選，其他不勾
+    const defaultChecked = /Id$|Name$/i.test(col);
+    out.push({ alias, col, paramName, defaultChecked });
+  }
+  return out;
+}
+
+// 把使用者勾選的欄位插入成 {? ... ?} 區塊
+function insertOptionalBlocks(sql, selectedCandidates) {
+  if (!selectedCandidates.length) return sql;
+
+  const whereM = sql.match(/\bWHERE\b[\s\S]*?(?=\b(?:GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT)\b|;|$)/i);
+  if (whereM) {
+    const insertPos = whereM.index + whereM[0].length;
+    const blocks = '\n' + selectedCandidates.map(c => `  {? AND ${c.alias}.${c.col} IN ({${c.paramName}}) ?}`).join('\n');
+    return sql.substring(0, insertPos) + blocks + sql.substring(insertPos);
+  }
+  // 沒 WHERE：找 GROUP/ORDER/HAVING 前插入 WHERE 1=1
+  const tail = sql.match(/\b(GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT)\b/i);
+  if (tail) {
+    const insertPos = tail.index;
+    const blocks = selectedCandidates.map(c => `  {? AND ${c.alias}.${c.col} IN ({${c.paramName}}) ?}\n`).join('');
+    return sql.substring(0, insertPos) + 'WHERE 1=1\n' + blocks + sql.substring(insertPos);
+  }
+  return sql;
 }
 
 function extractSelectAliases(sql) {
@@ -1967,7 +2143,7 @@ function extractSelectAliases(sql) {
   return aliases.filter(a => a && a.length < 40);
 }
 
-function autoParseSql() {
+async function autoParseSql() {
   const raw = ($('edPaste').value || '').trim();
   if (!raw) { toast('請先貼 SQL', 'warning'); return; }
 
@@ -2082,6 +2258,18 @@ function autoParseSql() {
     }
   }
 
+  // 偵測可作為選填條件的欄位，跳出 picker 讓使用者勾選
+  let optionalCount = 0;
+  const candidates = detectColumnCandidates(raw);
+  if (candidates.length) {
+    const selected = await promptForColumns(candidates);
+    if (selected.length) {
+      newSql = insertOptionalBlocks(newSql, selected);
+      $('edSql').value = newSql;
+      optionalCount = selected.length;
+    }
+  }
+
   const parts = [];
   if (memberMatches.length) {
     parts.push(memberMatches.map(x => `${x.column}（${x.type === 'account' ? '帳號' : '編號'}）`).join('、'));
@@ -2090,11 +2278,14 @@ function autoParseSql() {
     const namesUsed = detectedDates.slice().reverse().map((_, i) => dateNames[i] || `date${i + 1}`);
     parts.push(`日期參數：${namesUsed.join('、')}`);
   }
+  if (optionalCount) {
+    parts.push(`選填條件：${optionalCount} 個（Id/Name 欄位）`);
+  }
   if (!parts.length) {
     toast('沒偵測到名單條件或日期 — 你可以直接存成「常用語法」，或手動把要參數化的值改成 {參數名}', 'warning', 5500);
     return;
   }
-  toast(`✨ 解析成功：${parts.join(' ・ ')}`, 'success', 4500);
+  toast(`✨ 解析成功：${parts.join(' ・ ')}`, 'success', 5000);
   $('edPaste').value = '';
 }
 
@@ -2256,16 +2447,25 @@ async function generate() {
   const hasNonStatic = selectedQs.some(q => !isStaticQuery(q));
   const needsMembers = hasNonStatic && !inputCache.unique.length;
 
-  // 收集所有選到的查詢中的參數
-  const allParams = new Set();
+  // 收集所有選到的查詢中的參數，並標記哪些是選填的
+  const paramOptional = new Map(); // name → boolean (true = 選填)
   for (const q of selectedQs) {
-    for (const p of extractParams(q.sql)) allParams.add(p);
+    const opt = getOptionalParams(q.sql);
+    for (const p of extractParams(q.sql)) {
+      if (paramOptional.has(p)) {
+        // 任何一個查詢需要它就是「必填」
+        if (!opt.has(p)) paramOptional.set(p, false);
+      } else {
+        paramOptional.set(p, opt.has(p));
+      }
+    }
   }
+  const paramSpecs = Array.from(paramOptional.entries()).map(([name, optional]) => ({ name, optional }));
 
   let paramValues = {};
   let inlineMembers = null;
-  if (needsMembers || allParams.size) {
-    const result = await promptForParams(Array.from(allParams), { needsMembers });
+  if (needsMembers || paramSpecs.length) {
+    const result = await promptForParams(paramSpecs, { needsMembers });
     if (result === null) return; // 使用者取消
     if (needsMembers) {
       inlineMembers = (result.__members__ || '').trim();
@@ -2307,9 +2507,9 @@ async function generate() {
   const blocks = [];
   const skipped = [];
 
-  // 套參數值的小工具
+  // 套參數值的小工具：先處理選填區塊，再替換一般參數
   const applyParams = (sql) => {
-    let out = sql;
+    let out = processOptionalBlocks(sql, paramValues);
     for (const [name, value] of Object.entries(paramValues)) {
       out = out.split(`{${name}}`).join(value);
     }
@@ -2454,7 +2654,8 @@ $('genBtn').addEventListener('click', generate);
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (!$('paramModal').hidden) cancelParams();
+    if (!$('columnPickerModal').hidden) cancelColumnPicker();
+    else if (!$('paramModal').hidden) cancelParams();
     else if (!$('syncModal').hidden) closeSyncModal();
     else if ($('drawer').classList.contains('open')) closeDrawer();
   }
