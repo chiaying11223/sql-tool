@@ -44,7 +44,7 @@
     font-size: 14px;
     line-height: 1.55;
     min-height: 100vh;
-    padding-bottom: 96px;
+    padding-bottom: 24px;
     -webkit-font-smoothing: antialiased;
   }
   ::selection { background: var(--accent); color: #0a0e1a; }
@@ -892,13 +892,13 @@
 </div>
 
 <nav class="tabs" role="tablist">
-  <button class="tab-btn active" id="tabBtnGenerate" onclick="switchTab('generate')">📤 名單批次</button>
-  <button class="tab-btn" id="tabBtnLib" onclick="switchTab('lib')">📚 知識庫</button>
+  <button class="tab-btn active" id="tabBtnLib" onclick="switchTab('lib')">📚 知識庫</button>
+  <button class="tab-btn" id="tabBtnGenerate" onclick="switchTab('generate')">📤 批次名單</button>
   <button class="tab-btn" id="tabBtnManage" onclick="switchTab('manage')">⚙ 管理 <span class="count" id="manageCount">0</span></button>
 </nav>
 
 <main>
-  <div class="tab-pane" id="tabGenerate">
+  <div class="tab-pane" id="tabGenerate" hidden>
   <!-- Step 1 -->
   <section class="step" id="step1">
     <div class="step-header">
@@ -991,7 +991,7 @@
     </section>
   </div><!-- /tabManage -->
 
-  <div class="tab-pane" id="tabLib" hidden>
+  <div class="tab-pane" id="tabLib">
     <section class="step">
       <div class="step-header">
         <span class="step-num">📚</span>
@@ -1005,7 +1005,7 @@
 </main>
 
 <!-- Sticky action bar -->
-<div class="action-bar" id="actionBar">
+<div class="action-bar" id="actionBar" style="display:none">
   <div class="action-bar-inner">
     <div class="action-summary" id="actionSummary">尚未輸入</div>
     <button class="secondary" id="rawBtn" title="顯示原始語法（含佔位符），不替換參數">📚 原始</button>
@@ -1477,18 +1477,30 @@ function renderParsePreview() {
  * ================================================== */
 function renderQueryList() {
   const list = $('queryList');
+  // 批次名單只顯示「有名單功能」的查詢（{FILTER} 或 {LIST}），常用語法不放進來
+  const batchQueries = queries.filter(q => !isStaticQuery(q));
   if (!queries.length) {
     list.innerHTML = `
       <div class="q-add empty" onclick="switchTab('manage')">
         <div class="plus">＋</div>
         <div class="label">尚無查詢</div>
-        <div class="hint">切換到「⚙ 管理查詢」頁籤新增第一個查詢</div>
+        <div class="hint">切換到「⚙ 管理」頁籤新增第一個查詢</div>
+      </div>`;
+    updateModeBadge();
+    return;
+  }
+  if (!batchQueries.length) {
+    list.innerHTML = `
+      <div class="q-add empty" onclick="switchTab('lib')">
+        <div class="plus">📚</div>
+        <div class="label">沒有可批次套名單的查詢</div>
+        <div class="hint">這頁只放含 <code>{FILTER}</code> 或 <code>{LIST}</code> 的查詢。一般語法請到「📚 知識庫」找</div>
       </div>`;
     updateModeBadge();
     return;
   }
   const type = inputCache.type;
-  list.innerHTML = queries.map(q => {
+  list.innerHTML = batchQueries.map(q => {
     const isSelected = selectedIds.includes(q.id);
     const hasId = !!q.idColumn;
     const hasAcc = !!q.accountColumn;
@@ -1559,7 +1571,9 @@ function renderQueryList() {
 function selectAll(on) {
   if (on) {
     selectedIds = queries
+      .filter(q => !isStaticQuery(q)) // 常用語法不放在批次名單頁籤
       .filter(q => {
+        if (hasListPlaceholder(q)) return true; // {LIST} 兩種輸入都支援
         if (inputCache.type === 'member_id' && !q.idColumn) return false;
         if (inputCache.type === 'account' && !q.accountColumn) return false;
         return true;
@@ -1629,7 +1643,7 @@ function updateStepStates() {
 /* ==================================================
  * Tabs
  * ================================================== */
-let currentTab = 'generate';
+let currentTab = 'lib';
 
 function switchTab(name) {
   currentTab = name;
@@ -2898,6 +2912,7 @@ async function initApp() {
   updateActionBar();
   updateStepStates();
   updateManageCount();
+  renderLibTab();
 }
 
 initApp();
