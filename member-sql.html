@@ -1027,45 +1027,6 @@
   </div>
 </aside>
 
-<!-- Library Quick-Edit Modal -->
-<div class="modal" id="libEditModal" hidden>
-  <div class="modal-backdrop" onclick="closeLibEdit()"></div>
-  <div class="modal-panel" style="width:min(900px, 95vw);">
-    <div class="modal-header">
-      <h2 id="libEditTitle">查詢</h2>
-      <button class="icon-btn" onclick="closeLibEdit()">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="form-row">
-        <label>名稱</label>
-        <input type="text" id="libEditName" style="width:100%; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:var(--font-mono); font-size:13px;">
-      </div>
-      <div class="form-row">
-        <label>SQL <span style="color:var(--text-subtle); font-weight:400;">— 直接改值（日期、ID、欄位都可），按下方「複製」拿到剪貼簿</span></label>
-        <textarea id="libEditSql" style="width:100%; min-height:300px; background:var(--surface-2); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:10px 12px; font-family:var(--font-mono); font-size:13px; line-height:1.6; resize:vertical;" spellcheck="false"></textarea>
-      </div>
-      <details style="margin-top:6px; padding:12px; background:var(--surface-2); border-radius:6px; border:1px solid var(--border);">
-        <summary style="font-size:13px; color:var(--accent);">📋 一鍵套入會員名單（要把 ID/帳號換成一批時用）</summary>
-        <div style="margin-top:10px;">
-          <textarea id="libMemberList" placeholder="貼會員編號或帳號，多個以逗號或換行分隔，例如：&#10;52758876&#10;52758898&#10;或：52758876@AP, 52758898@AP" style="width:100%; min-height:80px; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:8px 10px; font-family:var(--font-mono); font-size:12.5px; resize:vertical;"></textarea>
-          <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
-            <button class="secondary" type="button" onclick="applyLibMemberList()">⚡ 套入到上面 SQL</button>
-            <span style="font-size:11px; color:var(--text-subtle);">會把 SQL 裡 <code>欄位 = 'X'</code> 或 <code>欄位 IN (...)</code> 換成你的清單</span>
-          </div>
-        </div>
-      </details>
-    </div>
-    <div style="padding: 12px 20px; border-top: 1px solid var(--border); display: flex; justify-content: space-between; gap: 8px; flex-shrink: 0; flex-wrap: wrap;">
-      <div></div>
-      <div style="display:flex; gap:8px;">
-        <button class="ghost" onclick="closeLibEdit()">取消</button>
-        <button class="secondary" onclick="copyLibSql()">📋 複製目前 SQL</button>
-        <button onclick="saveLibEdit()">💾 儲存到查詢庫</button>
-      </div>
-    </div>
-  </div>
-</div>
-
 <!-- Column Picker Modal (auto-parse 用) -->
 <div class="modal" id="columnPickerModal" hidden>
   <div class="modal-backdrop" onclick="cancelColumnPicker()"></div>
@@ -1924,10 +1885,8 @@ function previewQuery(id) {
 }
 
 /* ==================================================
- * 知識庫頁籤
+ * 知識庫頁籤 — 純瀏覽 + 一鍵複製
  * ================================================== */
-let libEditingId = null;
-
 function renderLibTab() {
   const grid = $('libGrid');
   const q = ($('libSearch').value || '').trim().toLowerCase();
@@ -1952,49 +1911,18 @@ function renderLibTab() {
     return;
   }
   grid.innerHTML = `<div class="lib-grid">${list.map(it => {
-    const preview = (it.sql || '').replace(/\s+/g, ' ').slice(0, 140);
+    const preview = (it.sql || '').replace(/\s+/g, ' ').slice(0, 200);
     return `
-      <div class="lib-card" data-id="${esc(it.id)}">
+      <div class="lib-card" data-id="${esc(it.id)}" title="點擊複製整段 SQL">
         <div class="name">${esc(it.name)}</div>
         ${it.description ? `<div class="desc">${esc(it.description)}</div>` : ''}
         ${preview ? `<div class="preview">${esc(preview)}</div>` : ''}
-        <div class="actions">
-          <button class="secondary" data-act="open">📋 開啟並複製</button>
-          <button class="ghost" data-act="quick" title="不開編輯框，直接複製原始 SQL">⚡ 快速複製</button>
-        </div>
       </div>`;
   }).join('')}</div>`;
 
   grid.querySelectorAll('.lib-card').forEach(card => {
-    const id = card.dataset.id;
-    card.querySelectorAll('button[data-act]').forEach(btn => {
-      btn.addEventListener('click', e => {
-        e.stopPropagation();
-        const act = btn.dataset.act;
-        if (act === 'open') openLibEdit(id);
-        else if (act === 'quick') libQuickCopy(id);
-      });
-    });
-    // 點卡片任意處 = 開啟編輯
-    card.addEventListener('click', () => openLibEdit(id));
+    card.addEventListener('click', () => libQuickCopy(card.dataset.id));
   });
-}
-
-function openLibEdit(id) {
-  const q = queries.find(x => x.id === id);
-  if (!q) return;
-  libEditingId = id;
-  $('libEditTitle').textContent = q.name;
-  $('libEditName').value = q.name;
-  $('libEditSql').value = q.sql || '';
-  $('libMemberList').value = '';
-  $('libEditModal').hidden = false;
-  setTimeout(() => $('libEditSql').focus(), 50);
-}
-
-function closeLibEdit() {
-  $('libEditModal').hidden = true;
-  libEditingId = null;
 }
 
 async function libQuickCopy(id) {
@@ -2002,72 +1930,8 @@ async function libQuickCopy(id) {
   if (!q) return;
   try {
     await navigator.clipboard.writeText(q.sql || '');
-    toast(`✓ 已複製「${q.name}」原始 SQL`, 'success');
+    toast(`✓ 已複製「${q.name}」`, 'success');
   } catch { toast('複製失敗', 'error'); }
-}
-
-async function copyLibSql() {
-  const sql = $('libEditSql').value;
-  if (!sql.trim()) { toast('SQL 是空的', 'warning'); return; }
-  try {
-    await navigator.clipboard.writeText(sql);
-    toast('✓ 目前 SQL 已複製到剪貼簿', 'success');
-  } catch { toast('複製失敗', 'error'); }
-}
-
-async function saveLibEdit() {
-  if (!libEditingId) return;
-  const name = $('libEditName').value.trim();
-  const sql = $('libEditSql').value.trim();
-  if (!name) { toast('請輸入名稱', 'warning'); return; }
-  if (!sql) { toast('請輸入 SQL', 'warning'); return; }
-  const i = queries.findIndex(q => q.id === libEditingId);
-  if (i < 0) return;
-  queries[i] = { ...queries[i], name, sql };
-  saveQueries();
-  closeLibEdit();
-  renderLibTab();
-  if (isSheetMode() && appsUrl) {
-    const r = await writeToSheet(queries);
-    if (r.ok) toast(`✅ 已儲存並同步到 Sheet：${name}`, 'success');
-    else toast(`⚠ 本機已存，但 Sheet 同步失敗：${r.reason}`, 'error', 5000);
-  } else {
-    toast(`💾 已儲存：${name}`, 'success');
-  }
-}
-
-function applyLibMemberList() {
-  const raw = ($('libMemberList').value || '').trim();
-  if (!raw) { toast('請先貼會員清單', 'warning'); return; }
-  const items = raw.split(/[,;\s\n\r\t]+/).map(s => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
-  if (!items.length) { toast('沒有有效的 ID 或帳號', 'warning'); return; }
-  const hasAt = items.some(x => x.includes('@'));
-  const allNumeric = items.every(x => /^\d+$/.test(x));
-  const listStr = (hasAt || !allNumeric) ? items.map(x => `'${x}'`).join(', ') : items.join(', ');
-  const looksLikeMember = (v) => {
-    const s = String(v).trim().replace(/^['"]|['"]$/g, '');
-    return s.includes('@') || /^\d{5,}$/.test(s);
-  };
-  const allLookLikeMember = (csv) => {
-    const parts = csv.split(',').map(s => s.trim()).filter(Boolean);
-    return parts.length > 0 && parts.every(looksLikeMember);
-  };
-  let sql = $('libEditSql').value;
-  let replaced = 0;
-  sql = sql.replace(/(\b(?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s+IN\s*\(([^)]*)\)/gi, (full, col, vals) => {
-    if (allLookLikeMember(vals)) { replaced++; return `${col} IN (${listStr})`; }
-    return full;
-  });
-  sql = sql.replace(/(\b(?:\[?[A-Za-z_]\w*\]?\.)?\[?[A-Za-z_]\w*\]?)\s*=\s*('[^']*'|\d+)/gi, (full, col, val) => {
-    if (looksLikeMember(val)) { replaced++; return `${col} IN (${listStr})`; }
-    return full;
-  });
-  if (replaced === 0) {
-    toast('找不到會員條件可替換（值要 5 碼以上數字或含 @）', 'warning', 4500);
-    return;
-  }
-  $('libEditSql').value = sql;
-  toast(`✓ 套入 ${items.length} 筆會員，替換 ${replaced} 處`, 'success');
 }
 
 function showEditor() {
@@ -3000,8 +2864,7 @@ function generateRaw() {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
-    if (!$('libEditModal').hidden) closeLibEdit();
-    else if (!$('columnPickerModal').hidden) cancelColumnPicker();
+    if (!$('columnPickerModal').hidden) cancelColumnPicker();
     else if (!$('paramModal').hidden) cancelParams();
     else if (!$('syncModal').hidden) closeSyncModal();
     else if ($('drawer').classList.contains('open')) closeDrawer();
