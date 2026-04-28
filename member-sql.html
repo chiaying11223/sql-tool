@@ -1104,23 +1104,25 @@ let lastSyncStatus = null; // { ok, message, count, at }
 
 function isSheetMode() { return syncSource === 'sheet' && !!sheetUrl; }
 
-// 常用語法 = SQL 中沒有 {FILTER} 也沒有 {LIST}（不需名單）
+// 常用語法 = SQL 中沒有任何「會員名單」佔位符
 function isStaticQuery(q) {
   const sql = (q && q.sql) || '';
-  return !sql.includes('{FILTER}') && !sql.includes('{LIST}');
+  return !sql.includes('{FILTER}') && !sql.includes('{LIST}')
+      && !sql.includes('{會員編號}') && !sql.includes('{會員帳號}');
 }
 
-// 是否為「彈性名單」查詢（用 {LIST}，不依賴 idColumn/accountColumn）
+// 是否為「彈性名單」查詢（不依賴 idColumn/accountColumn 設定）
 function hasListPlaceholder(q) {
-  return ((q && q.sql) || '').includes('{LIST}');
+  const sql = (q && q.sql) || '';
+  return sql.includes('{LIST}') || sql.includes('{會員編號}') || sql.includes('{會員帳號}');
 }
 
-// 系統保留字（不視為參數）
-const RESERVED_PLACEHOLDERS = new Set(['FILTER', 'LIST']);
+// 系統保留字（不視為一般參數，會用特殊邏輯處理）
+const RESERVED_PLACEHOLDERS = new Set(['FILTER', 'LIST', '會員編號', '會員帳號']);
 
-// 抓出 SQL 中所有 {參數} 佔位符（排除 {FILTER} 和 {LIST}）
+// 抓出 SQL 中所有 {參數} 佔位符（排除系統保留字）
 function extractParams(sql) {
-  const re = /\{([A-Za-z_]\w*)\}/g;
+  const re = /\{([\w一-鿿]+)\}/g;
   const set = new Set();
   let m;
   while ((m = re.exec(sql || '')) !== null) {
@@ -1881,7 +1883,7 @@ async function copyRawSql(id) {
   const q = queries.find(x => x.id === id);
   if (!q) return;
   try {
-    await navigator.clipboard.writeText(q.sql);
+    await navigator.clipboard.writeText(cleanForCopy(q.sql));
     toast(`✓ 已複製「${q.name}」原始語法`, 'success');
   } catch {
     toast('複製失敗', 'error');
@@ -1939,11 +1941,19 @@ function renderLibTab() {
   });
 }
 
+// 把 {? ... ?} 選填區塊轉成 SQL 註解，這樣貼到 SSMS 還是能直接跑
+function cleanForCopy(sql) {
+  return (sql || '').replace(/\{\?([\s\S]*?)\?\}/g, (full, inner) => {
+    const lines = inner.trim().split(/\r?\n/);
+    return lines.map(l => '-- 選填：' + l.trim()).join('\n');
+  });
+}
+
 async function libQuickCopy(id) {
   const q = queries.find(x => x.id === id);
   if (!q) return;
   try {
-    await navigator.clipboard.writeText(q.sql || '');
+    await navigator.clipboard.writeText(cleanForCopy(q.sql || ''));
     toast(`✓ 已複製「${q.name}」`, 'success');
   } catch { toast('複製失敗', 'error'); }
 }
@@ -2151,23 +2161,8 @@ function cancelEdit() {
 
 function renderEditor(q) {
   $('manageEditorTitle').textContent = editingId ? '編輯查詢' : '新增查詢';
+  const hasFilter = (q.sql || '').includes('{FILTER}');
   $('manageEditorArea').innerHTML = `
-    <div class="form-row" style="background: var(--surface-2); border: 1px dashed var(--border-strong); padding: 12px; border-radius: var(--radius);">
-      <label>🪄 貼既有 SQL 自動解析<span style="color:var(--text-subtle);font-weight:400;">（選用 — 一鍵填好下面欄位）</span></label>
-      <textarea id="edPaste" style="min-height: 110px; font-size: 12.5px;" placeholder="貼你現有的 SQL 進來 — 會自動把會員 IN (...) 條件換成 {FILTER}，並填入欄位名稱"></textarea>
-      <div style="display: flex; justify-content: flex-end; margin-top: 6px;">
-        <button class="secondary" onclick="autoParseSql()" type="button">🪄 解析並填入</button>
-      </div>
-      <div class="help">
-        <b>自動偵測規則</b>：
-        <ul style="margin:4px 0 0; padding-left:18px; line-height:1.7;">
-          <li><b>名單（簡單）</b>：單欄 <code>column IN (...)</code> 含 <code>@</code> 或大數字 → 轉成 <code>{FILTER}</code></li>
-          <li><b>名單（彈性）</b>：<code>column = '值'</code> 或多欄（如 <code>Sender = X OR Receiver = Y</code>）→ 轉成 <code>column IN ({LIST})</code></li>
-          <li><b>日期參數</b>：<code>'YYYY-MM-DD HH:MM'</code> → 自動轉成 <code>{startTime}</code> / <code>{endTime}</code></li>
-          <li><b>跳過</b>：event / status 等小數字（&lt;10000）的 IN/= 條件不動</li>
-        </ul>
-      </div>
-    </div>
     <div class="form-row">
       <label>名稱</label>
       <input type="text" id="edName" value="${esc(q.name || '')}" placeholder="例如：登入紀錄">
@@ -2177,36 +2172,59 @@ function renderEditor(q) {
       <input type="text" id="edDesc" value="${esc(q.description || '')}" placeholder="一句話介紹這個查詢做什麼">
     </div>
     <div class="form-row">
-      <label>會員編號欄位 <span style="color:var(--text-subtle)">（純數字輸入時使用）</span></label>
-      <input type="text" id="edIdCol" value="${esc(q.idColumn || '')}" placeholder="L.accountId">
-      <div class="help">輸入為純數字時，<code>{FILTER}</code> 會套成「<code>此欄位 IN (123, 456)</code>」。留空則此查詢僅支援帳號輸入。<br>⚠ <b>只有用 <code>{FILTER}</code> 才需要填這欄</b>；用 <code>{LIST}</code> 或常用語法不用。</div>
+      <label>SQL <span style="color:var(--text-subtle); font-weight:400;">— 直接貼整段就好；批次想套名單時把 <code>'值'</code> 改成 <code>{會員編號}</code> 或 <code>{會員帳號}</code></span></label>
+      <textarea id="edSql" style="min-height:320px; font-size:12.5px;" placeholder="貼整段 SQL 就好。例如：&#10;SELECT * FROM users WHERE Sender = '111111';" spellcheck="false">${esc(q.sql || '')}</textarea>
     </div>
-    <div class="form-row">
-      <label>會員帳號欄位 <span style="color:var(--text-subtle)">（含 @ 輸入時使用）</span></label>
-      <input type="text" id="edAccCol" value="${esc(q.accountColumn || '')}" placeholder="L.username">
-      <div class="help">輸入含 @ 時，<code>{FILTER}</code> 會套成「<code>此欄位 IN ('xx@AP', …)</code>」。留空則此查詢僅支援編號輸入。<br>⚠ <b>只有用 <code>{FILTER}</code> 才需要填這欄</b>；用 <code>{LIST}</code> 或常用語法不用。</div>
-    </div>
-    <div class="form-row">
-      <label>SQL（在條件處寫 <code>{FILTER}</code>）</label>
-      <textarea id="edSql" style="min-height:280px;font-size:12.5px">${esc(q.sql || '')}</textarea>
-      <div class="help">
-        <b>佔位符可混用</b>：
-        <ul style="margin:4px 0 0; padding-left:18px; line-height:1.7;">
-          <li><code>{FILTER}</code> → 整段條件（自動填欄位名 + IN 列表），需設定上方編號/帳號欄位</li>
-          <li><code>{LIST}</code> → 純值列表，自己寫 <code>column IN ({LIST})</code>，不用設欄位</li>
-          <li><code>{任意名稱}</code>（如 <code>{startTime}</code>）→ 參數，產生時跳出表單填值</li>
-          <li><code>{? ... ?}</code> → <b>選填條件區塊</b>。內含 <code>{itemId}</code> 之類的參數，<b>留空就整段省略</b>，填了才加進 SQL。例：<br>
-            <code style="display:block; padding:4px 8px; margin-top:4px;">WHERE date &gt;= '{startTime}'<br>{? AND ItemId IN ({itemId}) ?}<br>{? AND ItemName IN ({itemName}) ?}</code>
-          </li>
-        </ul>
-        <span style="color:var(--text-subtle);">什麼佔位符都沒有 → 常用語法（原樣輸出）</span>
+
+    <details style="margin-top:8px; padding:12px; background:var(--surface-2); border:1px dashed var(--border-strong); border-radius:var(--radius);">
+      <summary style="font-size:13px; color:var(--accent);">🪄 智能解析（選用 — 把上面 SQL 自動轉成可批次套名單的版本）</summary>
+      <div style="margin-top:10px;">
+        <div class="help" style="margin-bottom:8px;">
+          按下後會把 SQL 中：
+          <ul style="margin:4px 0; padding-left:18px; line-height:1.6;">
+            <li><code>Sender = '111111'</code>（5 碼以上）→ <code>Sender IN ({會員編號})</code></li>
+            <li><code>username = 'a@AP'</code>（含 @）→ <code>username IN ({會員帳號})</code></li>
+            <li><code>'2026-04-26 12:00'</code> → <code>'{開始時間}'</code></li>
+          </ul>
+          <span style="color:var(--text-subtle);">原始欄位名稱會保留 — 你看 SQL 就知道在篩什麼。</span>
+        </div>
+        <textarea id="edPaste" style="min-height:80px; font-size:12.5px;" placeholder="若上面 SQL 已是要解析的內容，這欄留空，按下「🪄 解析」會直接處理上面的 SQL"></textarea>
+        <div style="display:flex; justify-content:flex-end; margin-top:6px;">
+          <button class="secondary" onclick="autoParseFromCurrent()" type="button">🪄 解析（會更新上面 SQL）</button>
+        </div>
       </div>
+    </details>
+
+    ${hasFilter ? `
+    <div class="form-row" style="margin-top:14px; padding:10px; background:var(--surface-2); border-radius:var(--radius);">
+      <label style="color:var(--warning);">⚠ 你的 SQL 用到舊版 <code>{FILTER}</code> 佔位符 — 需要設定欄位</label>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:6px;">
+        <div>
+          <label style="font-size:11px;">會員編號欄位</label>
+          <input type="text" id="edIdCol" value="${esc(q.idColumn || '')}" placeholder="L.accountId">
+        </div>
+        <div>
+          <label style="font-size:11px;">會員帳號欄位</label>
+          <input type="text" id="edAccCol" value="${esc(q.accountColumn || '')}" placeholder="L.username">
+        </div>
+      </div>
+      <div class="help" style="margin-top:6px;">建議改用 <code>{會員編號}</code> 或 <code>{會員帳號}</code>，把欄位寫進 SQL 裡（例：<code>WHERE x.AccountId IN ({會員編號})</code>），就不用填這兩格。</div>
     </div>
-    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">
+    ` : `<input type="hidden" id="edIdCol" value="${esc(q.idColumn || '')}"><input type="hidden" id="edAccCol" value="${esc(q.accountColumn || '')}">`}
+
+    <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
       <button class="ghost" onclick="cancelEdit()">取消</button>
       <button onclick="saveQuery()">儲存</button>
     </div>
   `;
+}
+
+// 沒輸入 edPaste 時，直接解析當前 edSql 的內容
+async function autoParseFromCurrent() {
+  if (!$('edPaste').value.trim()) {
+    $('edPaste').value = $('edSql').value;
+  }
+  await autoParseSql();
 }
 
 // 偵測 SQL 中所有可作為選填條件的欄位（從 SELECT + JOIN ON 抓 alias.column；支援中括號 [xxx] 格式）
@@ -2366,31 +2384,23 @@ async function autoParseSql() {
   // 名單和日期都沒偵測到才提示
   // （日期偵測在後面，所以先暫存名單結果，整段最後判斷）
 
-  // 判斷模式：
-  //  - 單一欄位 + IN → 用 {FILTER}（最精簡，會自動填欄位名）
-  //  - 多個欄位 / 用 = 比對 → 用 {LIST}（更彈性，OR 結構保留）
-  const uniqCols = [...new Set(memberMatches.map(x => x.column))];
-  const useList = uniqCols.length > 1 || memberMatches.some(x => x.op === 'eq');
-
+  // 統一改用語意化佔位符：
+  //  - 數字型會員 → {會員編號}（產出 IN (123, 456) 不加引號）
+  //  - 帳號型會員（含 @）→ {會員帳號}（產出 IN ('a@AP', 'b@AP') 加引號）
   let newSql = raw;
   let foundId = '', foundAcc = '';
 
   for (const mm of memberMatches) {
-    if (useList) {
-      // column = 'x'  →  column IN ({LIST})
-      // column IN (...) →  column IN ({LIST})
-      newSql = newSql.split(mm.full).join(`${mm.column} IN ({LIST})`);
-    } else {
-      newSql = newSql.split(mm.full).join('{FILTER}');
-      if (mm.type === 'account' && !foundAcc) foundAcc = mm.column;
-      if (mm.type === 'member_id' && !foundId) foundId = mm.column;
-    }
+    const ph = mm.type === 'account' ? '會員帳號' : '會員編號';
+    newSql = newSql.split(mm.full).join(`${mm.column} IN ({${ph}})`);
+    if (mm.type === 'account' && !foundAcc) foundAcc = mm.column;
+    if (mm.type === 'member_id' && !foundId) foundId = mm.column;
   }
 
   // 3) 自動偵測日期字串並轉成參數佔位符
   // 比對 'YYYY-MM-DD' 或 'YYYY-MM-DD HH:MM' 或 'YYYY-MM-DD HH:MM:SS'
   const reDate = /'(\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?)'/g;
-  const dateNames = ['startTime', 'endTime', 'date3', 'date4', 'date5', 'date6'];
+  const dateNames = ['開始時間', '結束時間', '日期3', '日期4', '日期5', '日期6'];
   const detectedDates = [];
   // 收集所有日期出現位置（避免 replace 影響後續比對）
   let dm;
@@ -2442,18 +2452,8 @@ async function autoParseSql() {
 
   // 偵測可作為選填條件的欄位，跳出 picker 讓使用者勾選
   // 已被當成 {FILTER}/{LIST} 條件的欄位排除，避免重複篩選
-  const normalize = s => String(s).toLowerCase().replace(/[\[\]\s]/g, '');
-  const alreadyFiltered = new Set(memberMatches.map(mm => normalize(mm.column)));
+  // 不再自動跳出選填條件 picker — 使用者要的是清爽可貼的 SQL
   let optionalCount = 0;
-  const candidates = detectColumnCandidates(raw, alreadyFiltered);
-  if (candidates.length) {
-    const selected = await promptForColumns(candidates);
-    if (selected.length) {
-      newSql = insertOptionalBlocks(newSql, selected);
-      $('edSql').value = newSql;
-      optionalCount = selected.length;
-    }
-  }
 
   const parts = [];
   if (memberMatches.length) {
@@ -2711,9 +2711,16 @@ async function generate() {
     if (!unique.length) { skipped.push(q.name + '（需要名單）'); continue; }
 
     let sql = q.sql;
-    // 1) {LIST} → 純值列表（使用者自己寫 column IN ({LIST})）
+    // 計算兩種會員清單格式
+    const numList = usedItems.filter(x => /^\d+$/.test(x)).join(', ');
+    const accList = usedItems.map(x => x.includes("'") ? x : `'${x.replace(/'/g, '')}'`).join(', ');
+    // 1) {會員編號} → 純數字列表（不加引號）
+    sql = sql.split('{會員編號}').join(numList || listStr);
+    // 2) {會員帳號} → 加引號的列表
+    sql = sql.split('{會員帳號}').join(accList);
+    // 3) 舊版 {LIST} 兼容
     sql = sql.split('{LIST}').join(listStr);
-    // 2) {FILTER} → 完整條件子句（用 idColumn/accountColumn 自動組）
+    // 4) 舊版 {FILTER} 兼容
     if (sql.includes('{FILTER}')) {
       const col = type === 'member_id' ? q.idColumn : q.accountColumn;
       if (!col) { skipped.push(q.name + '（{FILTER} 需設定欄位）'); continue; }
