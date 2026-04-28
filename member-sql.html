@@ -2209,9 +2209,9 @@ function renderEditor(q) {
   `;
 }
 
-// 偵測 SQL 中所有可作為選填條件的欄位（從 SELECT + JOIN ON 抓 alias.column）
-function detectColumnCandidates(rawSql) {
-  // 1) 抓 SELECT clause（從 SELECT 到第一個外層 FROM）
+// 偵測 SQL 中所有可作為選填條件的欄位（從 SELECT + JOIN ON 抓 alias.column；支援中括號 [xxx] 格式）
+function detectColumnCandidates(rawSql, alreadyFiltered = new Set()) {
+  // 1) 抓 SELECT clause
   const selMatch = rawSql.match(/\bSELECT\b/i);
   if (!selMatch) return [];
   const start = selMatch.index + selMatch[0].length;
@@ -2227,25 +2227,32 @@ function detectColumnCandidates(rawSql) {
   if (fromIdx < 0) return [];
   const selectClause = rawSql.substring(start, fromIdx);
 
-  // 2) 抓所有 JOIN ... ON ... 條件（通常含其他可篩選欄位）
+  // 2) 抓所有 JOIN ... ON ... 條件
   const joinTexts = [];
   for (const m of rawSql.matchAll(/\bON\b([\s\S]*?)(?=\b(?:JOIN|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT)\b|;|$)/gi)) {
     joinTexts.push(m[1]);
   }
   const allText = selectClause + ' ' + joinTexts.join(' ');
 
-  // 3) 抓出所有 alias.ColumnName，去重 + 過濾時間類
+  // 3) 抓 alias.ColumnName，支援 [bracketed] 格式
+  const normalize = s => String(s).toLowerCase().replace(/[\[\]\s]/g, '');
   const seen = new Set();
   const out = [];
-  for (const m of allText.matchAll(/([A-Za-z_]\w*)\.([A-Za-z_]\w*)/g)) {
-    const alias = m[1], col = m[2], key = `${alias}.${col}`;
+  for (const m of allText.matchAll(/([A-Za-z_]\w*)\.(\[?[A-Za-z_]\w*\]?)/g)) {
+    const alias = m[1];
+    const colRaw = m[2]; // 可能是 [AccountId] 或 AccountId
+    const colName = colRaw.replace(/[\[\]]/g, '');
+    const key = `${alias}.${colName}`.toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
-    if (/Time$|Date$|CreateTime|UpdateTime|RecordTime/i.test(col)) continue;
-    const paramName = col.charAt(0).toLowerCase() + col.slice(1);
-    // Id/Name 預設勾選，其他不勾
-    const defaultChecked = /Id$|Name$/i.test(col);
-    out.push({ alias, col, paramName, defaultChecked });
+    // 跳過時間類欄位
+    if (/Time$|Date$|CreateTime|UpdateTime|RecordTime/i.test(colName)) continue;
+    // 跳過已經在 WHERE 被當成 {FILTER}/{LIST} 條件的欄位
+    if (alreadyFiltered.has(normalize(`${alias}.${colName}`))) continue;
+    const paramName = colName.charAt(0).toLowerCase() + colName.slice(1);
+    const defaultChecked = /Id$|Name$/i.test(colName);
+    // col 保留原本是否有中括號的形式，插入 SQL 時用
+    out.push({ alias, col: colRaw, colName, paramName, defaultChecked });
   }
   return out;
 }
@@ -2434,8 +2441,11 @@ async function autoParseSql() {
   }
 
   // 偵測可作為選填條件的欄位，跳出 picker 讓使用者勾選
+  // 已被當成 {FILTER}/{LIST} 條件的欄位排除，避免重複篩選
+  const normalize = s => String(s).toLowerCase().replace(/[\[\]\s]/g, '');
+  const alreadyFiltered = new Set(memberMatches.map(mm => normalize(mm.column)));
   let optionalCount = 0;
-  const candidates = detectColumnCandidates(raw);
+  const candidates = detectColumnCandidates(raw, alreadyFiltered);
   if (candidates.length) {
     const selected = await promptForColumns(candidates);
     if (selected.length) {
